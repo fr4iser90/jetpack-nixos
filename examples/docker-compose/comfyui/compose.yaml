@@ -1,0 +1,38 @@
+# Ein beliebiges leeres Verzeichnis reicht: Dockerfile + compose.yaml + .dockerignore hineinlegen,
+# dann z. B. mkdir -p models input output && docker compose up --build
+#
+# GPU: hardware.nvidia-container-toolkit.enable = true; auf dem Host.
+# CDI (Jetson): https://github.com/NVIDIA/jetpack-nixos — --device=nvidia.com/gpu=all
+services:
+  comfyui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        COMFYUI_REPO: https://github.com/comfyanonymous/ComfyUI.git
+        # Pin auf Release-Tag (Stand Repo: v0.18.3 neuer als v0.18.2 — bei Bedarf anheben)
+        COMFYUI_REF: v0.18.2
+        # Jetson: NVIDIA PyTorch-Wheel (Standard = JP 6.1). JP 6.0: anderes .whl aus .../jp/v60/pytorch/
+        NV_TORCH_WHEEL: https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
+        # Orin: 8.7. Xavier: "7.2". Reduziert CUDA-Compile-Zeit und Last (ohne das: sehr lange Builds).
+        TORCH_CUDA_ARCH_LIST: "8.7"
+        # Orin Nano: Default 2 — weniger RAM-Spitzen (nproc=6 hat hier oft OOM/Reboot ausgelöst). Stärkeres Board: 0 oder 4.
+        COMPILE_JOBS: 2
+    image: comfyui-local:latest
+    container_name: comfyui
+    restart: unless-stopped
+    ports:
+      - "8188:8188"
+    volumes:
+      - ./models:/app/models
+      - ./output:/app/output
+      - ./input:/app/input
+    # Jetson / CDI (wie README jetpack-nixos) — ohne diese Zeile: kein Treiber im Container
+    devices:
+      - nvidia.com/gpu=all
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics
+    # Kein deploy.resources + driver: nvidia — auf Jetson/CDI liefert das:
+    #   "could not select device driver nvidia with capabilities: [[gpu]]"
+    # Nur CDI-Gerät nutzen (wie README jetpack-nixos).

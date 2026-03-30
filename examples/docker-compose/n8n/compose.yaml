@@ -1,0 +1,18 @@
+# n8n — workflow automation (no GPU needed).
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - GENERIC_TIMEZONE=UTC
+      # Set a secret for production: N8N_ENCRYPTION_KEY=<openssl rand -hex 32>
+
+volumes:
+  n8n_data:

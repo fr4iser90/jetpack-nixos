@@ -1,0 +1,28 @@
+# llama.cpp HTTP server — replace MODEL with a GGUF path inside the volume or bind-mount.
+# Example: download a GGUF into ./models then set command to -m /models/your.gguf
+services:
+  llama-server:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: llama-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-m"
+      - "/models/REPLACE_ME.gguf"
+      - "-ngl"
+      - "99"
+    # GPU on Jetson: uncomment if your toolkit exposes GPU to this image
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

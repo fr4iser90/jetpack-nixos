@@ -1,0 +1,15 @@
+# TensorRT-LLM on Jetson is usually built from NVIDIA / jetson-containers, not one public multi-arch image.
+# After you build a local image (e.g. tensorrt-llm:local), replace the image below and run:
+#   docker compose --profile trt up -d
+services:
+  tensorrt-llm:
+    image: tensorrt-llm:local
+    container_name: tensorrt-llm
+    profiles:
+      - trt
+    restart: unless-stopped
+    volumes:
+      - ./models:/models
+    command: ["sleep", "infinity"]
+    devices:
+      - nvidia.com/gpu=all

@@ -1,0 +1,21 @@
+# Open WebUI — chat UI for Ollama. Start the ollama stack first (same host, port 11434).
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    networks:
+      - ai-net
+
+volumes:
+  open_webui_data:
+
+networks:
+  ai-net:
+    external: true

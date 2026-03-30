@@ -1,0 +1,27 @@
+# openai-whisper — CLI `whisper`.
+#
+# docker compose up --build
+#   → transkribiert ./audio/audio.wav nach ./audio/out (Modell: WHISPER_MODEL, default tiny)
+#   → ohne audio.wav: klare Fehlermeldung (kein Usage-Spam)
+#
+# Einzeldatei:
+#   docker compose run --rm openai-whisper /data/me.mp3 --model tiny --output_dir /data/out
+#
+# GPU (Jetson / CDI): devices auskommentieren; dann z. B. --device cuda an whisper übergeben (run …)
+services:
+  openai-whisper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openai-whisper-demo:local
+    container_name: openai-whisper-demo
+    restart: "no"
+    environment:
+      - WHISPER_MODEL=tiny
+    volumes:
+      - ./audio:/data
+    # devices:
+    #   - nvidia.com/gpu=all
+    # environment:
+    #   NVIDIA_VISIBLE_DEVICES: all
+    #   NVIDIA_DRIVER_CAPABILITIES: compute,utility

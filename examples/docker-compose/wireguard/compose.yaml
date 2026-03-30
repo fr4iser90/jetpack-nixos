@@ -1,0 +1,24 @@
+# WireGuard VPN (linuxserver image, arm64). Set SERVERURL to your public IP/DNS.
+# First run creates configs in ./config; see https://docs.linuxserver.io/images/docker-wireguard
+services:
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=100
+      - TZ=UTC
+      - SERVERURL=auto
+      - SERVERPORT=51820
+      - PEERS=1
+      - PEERDNS=1.1.1.1
+    volumes:
+      - ./config:/config
+    ports:
+      - "51820:51820/udp"
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1

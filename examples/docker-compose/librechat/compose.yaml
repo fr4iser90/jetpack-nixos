@@ -1,0 +1,50 @@
+# LibreChat needs MongoDB, Meilisearch, and optional RAG services.
+# Easiest path: clone https://github.com/danny-avila/LibreChat and use their deploy/docker-compose.yml
+# This is a minimal dev-style stack; set credentials before exposing to a network.
+services:
+  mongodb:
+    image: mongo:7
+    container_name: librechat-mongo
+    restart: unless-stopped
+    volumes:
+      - librechat_mongo:/data/db
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    container_name: librechat-meili
+    restart: unless-stopped
+    environment:
+      - MEILI_MASTER_KEY=change-me
+      - MEILI_NO_ANALYTICS=true
+    volumes:
+      - librechat_meili:/meili_data
+
+  librechat:
+    image: ghcr.io/danny-avila/librechat:latest
+    container_name: librechat
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+      - meilisearch
+    ports:
+      - "3080:3080"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=3080
+      - MONGO_URI=mongodb://mongodb:27017/LibreChat
+      - MEILI_HOST=http://meilisearch:7700
+      - MEILI_MASTER_KEY=change-me
+      - JWT_SECRET=change-me-jwt
+      - JWT_REFRESH_SECRET=change-me-refresh
+      - CREDS_KEY=change-me-32-byte-hex-replace
+      - CREDS_IV=change-me-16-byte-hex
+      # Full list: https://github.com/danny-avila/LibreChat/blob/main/.env.example
+    volumes:
+      - librechat_uploads:/app/client/public/images
+      - librechat_logs:/app/api/logs
+
+volumes:
+  librechat_mongo:
+  librechat_meili:
+  librechat_uploads:
+  librechat_logs:

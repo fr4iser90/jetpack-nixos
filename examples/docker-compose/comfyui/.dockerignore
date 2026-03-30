@@ -1,0 +1,11 @@
+# Copy into your ComfyUI clone root (build context). Docker only reads .dockerignore from the context dir.
+.git
+.github
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+.venv
+venv
+models
+output
+input

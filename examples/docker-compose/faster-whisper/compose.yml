@@ -1,0 +1,26 @@
+# faster-whisper (CTranslate2) — Image bauen, dann z. B.:
+#   mkdir -p audio && cp deine-datei.wav audio/audio.wav
+#   docker compose run --rm faster-whisper
+# Oder explizit:
+#   docker compose run --rm faster-whisper /data/me.mp3 --model base
+#
+# GPU (Jetson / jetpack-nixos CDI): devices auskommentieren, --device cuda --compute-type float16
+# Siehe comfyui/compose.yaml — kein deploy.resources mit driver: nvidia auf CDI.
+services:
+  faster-whisper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: faster-whisper-demo:local
+    container_name: faster-whisper-demo
+    volumes:
+      - ./audio:/data:ro
+      - huggingface-cache:/root/.cache/huggingface
+    # devices:
+    #   - nvidia.com/gpu=all
+    # environment:
+    #   NVIDIA_VISIBLE_DEVICES: all
+    #   NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+volumes:
+  huggingface-cache:

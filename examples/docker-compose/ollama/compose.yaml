@@ -1,0 +1,27 @@
+# Ollama — LLM runtime. Data in volume ollama_data.
+# GPU on Jetson (CDI): use devices (below), not driver: nvidia deploy — siehe comfyui/compose.yaml.
+# Einzeltest: docker run -d --name ollama -p 11434:11434 -v ollama_data:/root/.ollama --device=nvidia.com/gpu=all ollama/ollama
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - ai-net
+    # GPU (Jetson / jetpack-nixos CDI):
+    # devices:
+    #   - nvidia.com/gpu=all
+
+
+volumes:
+  ollama_data:
+
+networks:
+  ai-net:
+    external: true
