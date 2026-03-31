@@ -60,7 +60,8 @@ ARG TORCH_CUDA_ARCH_LIST=8.7
 ARG COMPILE_JOBS=0
 # cuSPARSELt muss VOR torchvision-Setup stehen: deren pyproject importiert torch → sonst libcusparseLt.so.0 fehlt.
 # Git-Build: --no-build-isolation + python3-dev (sonst Python.h fehlt).
-# Wheel-Build vision/audio: trotzdem oft 45–120+ Min auf dem Nano; pip -v zeigt Compilerzeilen (nicht nur „still running“).
+# torchvision: CUDA (Jetson). torchaudio: nur CPU bauen — CUDA-Extension aus Git passt zum NVIDIA-Jetson-Torch nicht (Import: torchaudio.lib / circular).
+# Build-Zeit: oft 45–120+ Min für vision; pip -v zeigt Fortschritt.
 RUN pip uninstall -y torch torchvision torchaudio 2>/dev/null || true \
     && pip install --no-cache-dir "${NV_TORCH_WHEEL}" \
     && pip install --no-cache-dir "nvidia-cusparselt-cu12" \
@@ -73,8 +74,8 @@ RUN pip uninstall -y torch torchvision torchaudio 2>/dev/null || true \
     && if [ "${COMPILE_JOBS}" -gt 0 ] 2>/dev/null; then J="${COMPILE_JOBS}"; else J="$(nproc)"; fi \
     && export MAX_JOBS="$J" CMAKE_BUILD_PARALLEL_LEVEL="$J" NINJA_STATUS='[%f/%t] ' \
     && pip install -v --no-cache-dir --no-build-isolation "git+https://github.com/pytorch/vision@v0.20.0" --no-deps \
-    && pip install -v --no-cache-dir --no-build-isolation "git+https://github.com/pytorch/audio@v2.5.0" --no-deps \
-    && python3 -c "import numpy; import torch; import torchvision; print('numpy', numpy.__version__, 'torch', torch.__version__, 'torchvision', torchvision.__version__)"
+    && USE_CUDA=0 pip install -v --no-cache-dir --no-build-isolation "git+https://github.com/pytorch/audio@v2.5.0" --no-deps \
+    && python3 -c "import numpy; import torch; import torchvision; import torchaudio; print('numpy', numpy.__version__, 'torch', torch.__version__, 'tv', torchvision.__version__, 'ta', torchaudio.__version__)"
 
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 
