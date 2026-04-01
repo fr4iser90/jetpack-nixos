@@ -1,4 +1,4 @@
-# NixOS module for NVIDIA Jetson devices
+# NixOS on Jetson Orin Nano (Super) — NixOS module + installer ISO
 
 This repository packages components from NVIDIA's [JetPack SDK](https://developer.nvidia.com/embedded/jetpack) for use with NixOS, including:
  * Platform firmware flashing scripts
@@ -11,16 +11,13 @@ This repository packages components from NVIDIA's [JetPack SDK](https://develope
    - Graphics: Wayland, GBM, EGL, Vulkan
    - Power/fan control: nvpmodel, nvfancontrol
 
-This package supports JetPack 5, 6, and 7. It works with NVIDIA's developer kits supported by these versions only:
+## Scope / Target device
 
-|       Device       | JetPack 5 | JetPack 6 | JetPack 7 |
-| ------------------ | --------- | --------- | --------- |
-| Jetson Thor AGX    |           |           |     ✓     |
-| Jetson Orin AGX    |     ✓     |     ✓     |           |
-| Jetson Orin NX     |     ✓     |     ✓     |           |
-| Jetson Orin Nano   |     ✓     |     ✓     |           |
-| Jetson Xavier AGX  |     ✓     |           |           |
-| Jetson Xavier NX   |     ✓     |           |           |
+This fork is primarily tested on:
+
+- **Jetson Orin Nano Super Developer Kit** (`som = "orin-nano"`, `carrierBoard = "devkit"`, `super = true`)
+
+Other Jetson devices / JetPack versions may still work, but are **not** the main focus of this README.
 
 The Jetson Nano, TX2, and TX1 devices are _not_ supported, since support for them was dropped upstream in JetPack 5.
 
@@ -41,12 +38,11 @@ Bus 003 Device 013: ID 0955:7023 NVIDIA Corp. APX
 ```
 
 On an x86_64 machine (some of NVIDIA's precompiled components like `tegrarcm_v2` are only built for x86_64),
-build and run (as root) the flashing script which corresponds to your device (making sure to
-replace `xavier-agx` with the name of your device, use `nix flake show` to see options):
+build and run (as root) the flashing script which corresponds to your device (use `nix flake show` to see options):
 
 ```shell
-$ nix build github:anduril/jetpack-nixos#flash-xavier-agx-devkit
-$ sudo ./result/bin/flash-xavier-agx-devkit
+$ nix build github:fr4iser90/nixos-jetson-orin-nano#flash-orin-nano-super-devkit
+$ sudo ./result/bin/flash-orin-nano-super-devkit
 ```
 
 At this point, your device should have a working UEFI firmware accessible either a monitor/keyboard, or via UART.
@@ -61,29 +57,34 @@ sudo dd if=./result/iso/nixos-22.11pre-git-aarch64-linux.iso of=/dev/sdX bs=1M o
 (Replace `/dev/sdX` with the correct path for your USB drive)
 
 As an alternative, you could also try the generic ARM64 multiplatform ISO from NixOS. See https://nixos.wiki/wiki/NixOS_on_ARM/UEFI
-(Last I tried, this worked on Xavier AGX but not Orin AGX. We should do additional testing to see exactly what is working or not with the vendor kernel vs. mainline kernel)
 
 ### Installing NixOS
 
 Insert the USB drive into the Jetson device.
-On the AGX devkits, I've had the best luck plugging into the USB-C slot above the power barrel jack.
-You may need to try a few USB options until you find one that works with both the UEFI firmware and the Linux kernel.
+You may need to try a few USB ports until you find one that works with both the UEFI firmware and the Linux kernel.
 
 Press power / reset as needed.
 When prompted, press ESC to enter the UEFI firmware menu.
 In the "Boot Manager", select the correct USB device and boot directly into it.
 
 Follow the [NixOS manual](https://nixos.org/manual/nixos/stable/index.html#sec-installation) for installation instructions, using the instructions specific to UEFI devices.
-Include the following in your `configuration.nix` before installing:
+
+At minimum you need:
+
+- a disk layout (`hardware-configuration.nix` / `fileSystems.*`)
+- at least one user (`users.users.*`) or another way to log in after first boot
+
+Then, include the following in your `configuration.nix` before installing:
 ```nix
 {
   imports = [
-    (builtins.fetchTarball "https://github.com/anduril/jetpack-nixos/archive/master.tar.gz" + "/modules/default.nix")
+    (builtins.fetchTarball "https://github.com/fr4iser90/nixos-jetson-orin-nano/archive/master.tar.gz" + "/modules/default.nix")
   ];
 
   hardware.nvidia-jetpack.enable = true;
-  hardware.nvidia-jetpack.som = "xavier-agx"; # Other options include orin-agx, xavier-nx, and xavier-nx-emmc
+  hardware.nvidia-jetpack.som = "orin-nano";
   hardware.nvidia-jetpack.carrierBoard = "devkit";
+  hardware.nvidia-jetpack.super = true;
 
   # Enable GPU support - needed even for CUDA and containers
   hardware.graphics.enable = true;
@@ -95,7 +96,7 @@ For your `flake.nix`, include the following:
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    jetpack.url = "github:anduril/jetpack-nixos/master"; # Add this line
+    jetpack.url = "github:fr4iser90/nixos-jetson-orin-nano/master";
     jetpack.inputs.nixpkgs.follows = "nixpkgs";
   };
   outputs = inputs@{ self, nixpkgs, jetpack, ... } : { # Add jetpack
@@ -109,32 +110,19 @@ And include this in your conf, i.e. `configuration.nix`
 ```nix
 {
   hardware.nvidia-jetpack.enable = true;
-  hardware.nvidia-jetpack.som = "xavier-agx"; # Other options include orin-agx, xavier-nx, and xavier-nx-emmc
+  hardware.nvidia-jetpack.som = "orin-nano";
   hardware.nvidia-jetpack.carrierBoard = "devkit";
+  hardware.nvidia-jetpack.super = true;
 
   # Enable GPU support - needed even for CUDA and containers
   hardware.graphics.enable = true;
 }
 ```
-
-The Xavier AGX contains some critical firmware paritions on the eMMC.
-If you are installing NixOS to the eMMC, be sure to not remove these partitions!
-You can remove and replace the "UDA" partition if you want to install NixOS to the eMMC.
-Better yet, install to an SSD.
-
-After installing, reboot and pray!
-
-##### Xavier AGX note:
-On all recent Jetson devices besides the Xavier AGX, the firmware stores the UEFI variables on a flash chip on the QSPI bus.
-However, the Xavier AGX stores it on a `uefi_variables` partition on the eMMC.
-This means that it cannot support runtime UEFI variables, since the UEFI runtime drivers to access the eMMC would conflict with the Linux kernel's drivers for the eMMC.
-Concretely, that means that you cannot modify the EFI variables from Linux, so UEFI bootloaders will not be able to create an EFI boot entry and reorder the boot options.
-You may need to enter the firmware menu and reorder it manually so NixOS will boot first.
-(See [this issue](https://forums.developer.nvidia.com/t/using-uefi-runtime-variables-on-xavier-agx/227970))
+After installing, reboot.
 
 ### JetPack Versions
 The major JetPack version may be changed by setting `hardware.nvidia-jetpack.majorVersion`.
-It defaults to the latest version supported by the board (e.g. JetPack 6 for Orin and JetPack 5 for Xavier).
+It defaults to the latest version supported by the board.
 The "generic" som defaults to JetPack 6.
 
 Note that the JetPack firmware of a given version is incompatible with the kernel and rootfs of
@@ -156,17 +144,6 @@ For DP on Orin AGX in particular: try connecting the cable when the fan temporar
 On Orin AGX/NX/Nano, the Linux console does not seem to work at all on the HDMI/DisplayPort.
 This may be an upstream limitation (not jetpack-nixos specific).
 
-On Xavier AGX and Xavier NX, add `boot.kernelParams = [ "fbcon=map:<n>" ]`, replacing `<n>` with the an integer according to the following:
-
-Xavier AGX devkit:
-- 0 for front USB-C port (recovery port)
-- 1 for rear USB-C port (above power barrel jack)
-- 2 for rear HDMI port
-
-Xavier NX devkit:
-- 0 for DisplayPort
-- 1 for HDMI
-
 Given the unreliability of graphical console output on Jetson devices, I recommend using the serial port as the go-to for troubleshooting.
 
 #### X11
@@ -177,7 +154,7 @@ GDM apparently does not currently work.
 
 #### Wayland
 Set `hardware.nvidia-jetpack.modesetting.enable = true;`
-Weston and sway have been tested working on Orin devices, but do not work on Xavier devices.
+Weston and sway have been tested working on Orin devices.
 
 ### Updating firmware from device
 Recent versions of JetPack (>=5.1) support updating the device firmware from the device using the UEFI Capsule update mechanism.
@@ -195,8 +172,7 @@ Expected firmware version is: 35.6.1-06cb4270ebfe
 If these versions do not match, you can update your firmware using the UEFI Capsule update mechanism. The procedure to do so is below:
 
 To build a capsule update file, build the
-`config.system.build.uefiCapsuleUpdate` attribute from your NixOS build. For the standard devkit configurations supported in this repository, one could also run (for example),
-`nix build .#uefi-capsule-update-xavier-nx-emmc-devkit`. This will produce a file that you can scp (no need for `nix copy`) to the device to update.
+`config.system.build.uefiCapsuleUpdate` attribute from your NixOS build. For the standard devkit configurations supported in this repository, run `nix flake show` and pick a matching `uefi-capsule-update-*` output. This will produce a file that you can scp (no need for `nix copy`) to the device to update.
 
 Once the file is on the device, run:
 ```
@@ -314,7 +290,7 @@ Breaking down these components:
 >
 > Furthermore, it is strongly recommended that `config.cudaCapabilities` is always set explicitly, given it reduces build times, produces smaller closures, and provides the CUDA compiler more opportunities for optimization.
 
-So, the above configuration allows building CUDA-accelerated packages (through `allowUnfree` and `cudaSupport`) and tells Nixpkgs to generate device code targeting Xavier (`"7.2"`) and Orin (`"8.7"`).
+So, the above configuration allows building CUDA-accelerated packages (through `allowUnfree` and `cudaSupport`) and tells Nixpkgs to generate device code targeting Orin (`"8.7"`).
 
 ### Re-using `jetpack-nixos`'s CUDA package set
 
