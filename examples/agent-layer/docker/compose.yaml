@@ -1,0 +1,68 @@
+# Agent layer + PostgreSQL. Netzwerk ai-net (wie examples/ollama/docker/compose.yaml).
+#
+# Start:
+#   docker compose up -d
+#
+# Passwort für Produktion überschreiben, z. B.:
+#   POSTGRES_PASSWORD=... DATABASE_URL=postgresql://agent:...@postgres:5432/agent docker compose up -d
+#
+# Open WebUI: OpenAI API URL → http://agent-layer:8080/v1 (im gleichen Docker-Netz)
+#   oder vom Host: http://HOST_IP:8088/v1
+#
+# Modell mit Tool Calling (z. B. llama3.1, qwen2.5).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agent-layer-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent
+    volumes:
+      - agent_pg_data:/var/lib/postgresql/data
+    networks:
+      - ai-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent"]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  agent-layer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jetpack-agent-layer:local
+    container_name: agent-layer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8088:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - DATABASE_URL=postgresql://agent:agent@postgres:5432/agent
+      - AGENT_MAX_TOOL_ROUNDS=8
+      # Zusatz-Plugins (.py mit TOOLS + HANDLERS), siehe extra_plugins/sample_echo.py
+      # - AGENT_PLUGINS_EXTRA_DIR=/data/plugins
+      # Optional: nur gelistete SHA256 (sha256sum datei.py) für Extra-Plugins
+      # - AGENT_PLUGINS_ALLOWED_SHA256=abc123...,def456...
+      # Nemotron o. Ä. schreibt Tool-JSON manchmal nur in message content — Fallback (Standard an):
+      # - AGENT_CONTENT_TOOL_FALLBACK=false
+      # Optional:
+      # - AGENT_API_KEY=change-me
+      # - AGENT_SYSTEM_PROMPT=You are a helpful homelab assistant.
+    # volumes:
+    #   - ./extra_plugins:/data/plugins:ro
+    networks:
+      - ai-net
+
+volumes:
+  agent_pg_data:
+
+networks:
+  ai-net:
+    external: true
