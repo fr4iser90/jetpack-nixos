@@ -39,6 +39,13 @@ USER_SUB_HEADERS = _user_sub_headers()
 TENANT_ID_HEADER = (os.environ.get("AGENT_TENANT_ID_HEADER") or "X-Agent-Tenant-Id").strip()
 DEFAULT_EXTERNAL_SUB = (os.environ.get("AGENT_DEFAULT_EXTERNAL_SUB") or "default").strip() or "default"
 
+# Fernet URL-safe base64 key for encrypting user_secrets at rest (generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+SECRETS_MASTER_KEY = (os.environ.get("AGENT_SECRETS_MASTER_KEY") or "").strip()
+
+# Optional base URL for curl examples in register_secrets / secrets_help (e.g. https://agent.example.com). Else 127.0.0.1:AGENT_HTTP_PORT.
+PUBLIC_BASE_URL = (os.environ.get("AGENT_PUBLIC_URL") or "").strip().rstrip("/")
+HTTP_EXAMPLE_PORT = (os.environ.get("AGENT_HTTP_PORT") or "8088").strip()
+
 
 def plugins_allowed_sha256() -> frozenset[str] | None:
     raw = os.environ.get("AGENT_PLUGINS_ALLOWED_SHA256", "").strip()

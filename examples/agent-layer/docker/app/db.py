@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -141,6 +144,40 @@ MIGRATIONS: list[tuple[int, str]] = [
           ON tool_invocations (tenant_id, user_id);
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE IF NOT EXISTS user_secrets (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          service_key TEXT NOT NULL,
+          ciphertext BYTEA NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          UNIQUE (user_id, service_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_secrets_user
+          ON user_secrets (user_id);
+        """,
+    ),
+    (
+        4,
+        """
+        CREATE TABLE IF NOT EXISTS secret_upload_otps (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          otp_hash TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          used_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_secret_otps_hash_unused
+          ON secret_upload_otps (otp_hash)
+          WHERE used_at IS NULL;
+        """,
+    ),
 ]
 
 
@@ -239,6 +276,20 @@ def ensure_user_external(external_sub: str, tenant_id: int) -> tuple[int, int]:
     return uid, tid
 
 
+def user_external_sub(user_id: int) -> str | None:
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT external_sub FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        return None
+    return str(row[0]) if row[0] is not None else None
+
+
 def todo_create(title: str) -> int:
     tenant_id, user_id = identity.get_identity()
     with pool().connection() as conn:
@@ -335,3 +386,134 @@ def recent_tool_invocations(limit: int = 50) -> list[dict[str, Any]]:
             rows = cur.fetchall()
         conn.commit()
     return [dict(r) for r in rows]
+
+
+def user_secret_upsert(user_id: int, service_key: str, plaintext: str) -> None:
+    from . import crypto_secrets
+
+    ct = crypto_secrets.encrypt_secret(plaintext)
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_secrets (user_id, service_key, ciphertext)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, service_key) DO UPDATE SET
+                  ciphertext = EXCLUDED.ciphertext,
+                  updated_at = now()
+                """,
+                (user_id, service_key, ct),
+            )
+        conn.commit()
+
+
+def user_secret_get_plaintext(user_id: int, service_key: str) -> str | None:
+    """Server-side only — never return this to LLM tool JSON."""
+    from . import crypto_secrets
+
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ciphertext FROM user_secrets
+                WHERE user_id = %s AND service_key = %s
+                """,
+                (user_id, service_key),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        return None
+    return crypto_secrets.decrypt_secret(bytes(row[0]))
+
+
+def user_secret_delete(user_id: int, service_key: str) -> bool:
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM user_secrets
+                WHERE user_id = %s AND service_key = %s
+                """,
+                (user_id, service_key),
+            )
+            n = cur.rowcount
+        conn.commit()
+    return n > 0
+
+
+def user_secret_list_service_keys(user_id: int) -> list[str]:
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT service_key FROM user_secrets
+                WHERE user_id = %s
+                ORDER BY service_key
+                """,
+                (user_id,),
+            )
+            rows = cur.fetchall()
+        conn.commit()
+    return [str(r[0]) for r in rows]
+
+
+def secret_upload_otp_create(user_id: int, ttl_seconds: int = 600) -> str:
+    """Insert a one-time registration token; return plaintext OTP (show once)."""
+    raw = secrets.token_urlsafe(18)
+    otp_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    expires = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO secret_upload_otps (user_id, otp_hash, expires_at)
+                VALUES (%s, %s, %s)
+                """,
+                (user_id, otp_hash, expires),
+            )
+        conn.commit()
+    return raw
+
+
+def user_secret_register_with_otp(otp_raw: str, service_key: str, plaintext: str) -> None:
+    """Validate OTP (single-use), then upsert encrypted secret for bound user."""
+    from . import crypto_secrets
+
+    otp_raw = (otp_raw or "").strip()
+    if not otp_raw:
+        raise ValueError("otp is required")
+    otp_hash = hashlib.sha256(otp_raw.encode("utf-8")).hexdigest()
+    ct = crypto_secrets.encrypt_secret(plaintext)
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT user_id FROM secret_upload_otps
+                WHERE otp_hash = %s AND used_at IS NULL AND expires_at > now()
+                FOR UPDATE
+                """,
+                (otp_hash,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ValueError("invalid or expired otp")
+            uid = int(row[0])
+            cur.execute(
+                """
+                UPDATE secret_upload_otps SET used_at = now()
+                WHERE otp_hash = %s AND used_at IS NULL
+                """,
+                (otp_hash,),
+            )
+            cur.execute(
+                """
+                INSERT INTO user_secrets (user_id, service_key, ciphertext)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, service_key) DO UPDATE SET
+                  ciphertext = EXCLUDED.ciphertext,
+                  updated_at = now()
+                """,
+                (uid, service_key, ct),
+            )
+        conn.commit()

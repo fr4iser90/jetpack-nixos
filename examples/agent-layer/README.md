@@ -61,7 +61,7 @@ Weitere Variablen: siehe `docker/.env.example` (`OLLAMA_BASE_URL`, `AGENT_HTTP_P
 
 ## Plugins
 
-- **Built-in:** `docker/app/plugins/*.py` — pro Datei `TOOLS` + `HANDLERS`, optional `PLUGIN_ID`, `__version__`.
+- **Built-in:** `docker/app/plugins/*.py` — pro Datei `TOOLS` + `HANDLERS`, optional `PLUGIN_ID`, `__version__` (u. a. `gmail.py` für IMAP/Gmail, siehe [TOOLS.md](./TOOLS.md#gmail-plugin-gmail)).
 - **Extra:** `AGENT_PLUGINS_EXTRA_DIR` + `*.py`, Reload: `POST /v1/admin/reload-plugins?scope=extra` (mit `AGENT_API_KEY`, falls gesetzt).
 
 Details und **Checkliste** der Tools: [TOOLS.md](./TOOLS.md).
@@ -75,6 +75,8 @@ Details und **Checkliste** der Tools: [TOOLS.md](./TOOLS.md).
 | POST | `/v1/chat/completions` | Chat + Tool-Loop |
 | GET | `/v1/tools` | Schemas + Plugin-Meta |
 | POST | `/v1/admin/reload-plugins` | Registry neu laden |
+| GET/POST/DELETE | `/v1/user/secrets` | Pro-User-Geheimnisse (verschlüsselt), siehe [TOOLS.md](./TOOLS.md#user-secrets) |
+| POST | `/v1/user/secrets/register-with-otp` | Secret speichern mit Einmalkennwort aus Tool `register_secrets` (ohne Bearer) |
 
 ## Siehe auch
 

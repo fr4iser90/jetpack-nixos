@@ -18,7 +18,9 @@ from . import config
 from . import db
 from . import identity
 from .agent import chat_completion
+from .http_identity import resolve_user_tenant
 from .registry import get_registry, reload_registry
+from .user_secrets_api import router as user_secrets_router
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -33,7 +35,8 @@ async def lifespan(_app: FastAPI):
     db.close_pool()
 
 
-app = FastAPI(title="agent-layer", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="agent-layer", version="0.6.0", lifespan=lifespan)
+app.include_router(user_secrets_router)
 
 _cors_origins = [
     o.strip() for o in os.environ.get("AGENT_CORS_ORIGINS", "*").split(",") if o.strip()
@@ -54,6 +57,9 @@ async def optional_api_key(request: Request, call_next):
     if not config.OPTIONAL_API_KEY:
         return await call_next(request)
     if request.url.path in ("/health", "/v1/models"):
+        return await call_next(request)
+    # OTP minted in chat binds to user_id; no shared Bearer for end users (see register_secrets tool).
+    if request.method == "POST" and request.url.path == "/v1/user/secrets/register-with-otp":
         return await call_next(request)
     auth = request.headers.get("authorization") or ""
     token = auth.removeprefix("Bearer ").strip()
@@ -166,21 +172,7 @@ async def chat_completions(request: Request):
     work = dict(body)
     work["stream"] = False
 
-    external_sub = config.DEFAULT_EXTERNAL_SUB
-    for h in config.USER_SUB_HEADERS:
-        v = request.headers.get(h)
-        if v is not None and str(v).strip():
-            external_sub = str(v).strip()
-            break
-    raw_tenant = request.headers.get(config.TENANT_ID_HEADER)
-    try:
-        tenant_hdr = int(str(raw_tenant).strip()) if raw_tenant and str(raw_tenant).strip() else 1
-    except (TypeError, ValueError):
-        tenant_hdr = 1
-    if tenant_hdr < 1:
-        tenant_hdr = 1
-
-    user_id, tenant_id = db.ensure_user_external(external_sub, tenant_hdr)
+    user_id, tenant_id = resolve_user_tenant(request)
     id_token = identity.set_identity(tenant_id, user_id)
 
     try:

@@ -17,6 +17,13 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 | [x] | `deep_search` | `web_search` | Tavily: `raw_content`. Ohne: Snippets + **Seitenabruf** wenn `robots.txt` den UA erlaubt (`fetch_status`, `raw_content`). Abschalten: `AGENT_DISABLE_FETCH_DEEP=true`. |
 | [x] | `list_available_tools` | `meta` | Alle Tools mit Beschreibung + JSON-Schema (Parameter). |
 | [x] | `get_tool_help` | `meta` | Hilfe zu einem Tool nach Namen (`tool_name`). |
+| [x] | `register_secrets` | `meta` | Secret registrieren: Einmalcode + fertiger `curl` (OTP-Flow); z. B. `service_key_example: gmail`. |
+| [x] | `secrets_help` | `meta` | Hilfe: Überblick + Legacy-`curl` für Liste/Löschen / Header-POST (kein OTP). |
+| [x] | `gmail_search` | `gmail` | Gmail-Suche (IMAP `X-GM-RAW`, z. B. `newer_than:7d is:unread`). |
+| [x] | `gmail_read` | `gmail` | Eine Mail per IMAP-UID lesen (Plain-Text-Body, gekürzt). |
+| [x] | `gmail_collect_for_summary` | `gmail` | Mehrere Mails laden → `combined_excerpt`; Modell fasst für den Nutzer zusammen. |
+
+*(Frühere Tool-Namen `issue_secret_registration_otp` / `secret_storage_help` — durch Umbenennung ersetzt.)*
 
 **Hilfe / „Welche Tools gibt es?“**
 
@@ -36,6 +43,30 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 - **Ohne Proxy:** Im Repo ist **`examples/open-webui/docker/compose.yaml`** mit **`ENABLE_FORWARD_USER_INFO_HEADERS=true`** vorkonfiguriert; der **agent-layer** nutzt standardmäßig **`X-OpenWebUI-User-Id`** (dann **`X-Agent-User-Sub`** als Fallback). `external_sub` = WebUI-User-ID (Header-Namen bei WebUI per `FORWARD_USER_INFO_HEADER_USER_ID` änderbar).
 - Alternativ: **Reverse-Proxy** setzt `X-Agent-User-Sub`, oder `AGENT_USER_SUB_HEADER` anpassen.
 - **Sicherheit:** Ohne `AGENT_API_KEY` kann jeder Client beliebige Subs vorgeben. Für geteilten Zugriff: API-Key + vertrauenswürdiger Proxy, der `X-Agent-User-Sub` setzt und von außen nicht überschreibbar macht.
+
+### User secrets
+
+- **Nicht** das Klartext-Secret in den Chat schreiben — Registrierung per **`curl`** im eigenen Terminal (oder später UI).
+- Tabelle **`user_secrets`**: pro `users.id` und **`service_key`** (kleinbuchstaben `[a-z0-9._-]`, max. 63 Zeichen) ein **Fernet**-verschlüsselter Blob.
+- **`AGENT_SECRETS_MASTER_KEY`** (nur **Betreiber**, nie Endnutzer): Fernet-Key erzeugen mit  
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`  
+  — in **`docker/.env`**, nicht committen. Verschlüsselt nur die Datenbank-Inhalte; Nutzer sehen oder tippen das **nicht**. Bei Key-Verlust sind gespeicherte Secrets **nicht** wiederherstellbar.
+- **Registrieren (empfohlen):** Tool **`register_secrets`** — legt ein **Einmalkennwort** für den **aktuellen Chat-User** an und liefert **`curl_bash`**: darin ist das OTP schon im JSON; der Nutzer ersetzt nur den Platzhalter **`DEIN_GMAIL_APP_PASSWORT`** lokal und führt den Befehl aus. Endpoint: **`POST /v1/user/secrets/register-with-otp`** (ohne Bearer — wenn `AGENT_API_KEY` gesetzt ist, ist dieser Pfad davon ausgenommen).
+- **OTP-Sicherheit:** Wer den Chat mitlesen kann, könnte das OTP nutzen — kurz gültig (Standard 10 min), **einmalig**; Befehl zeitnah ausführen.
+- **Legacy** (Header + optional Bearer): `POST /v1/user/secrets` mit denselben User-Headern wie beim Chat; wenn **`AGENT_API_KEY`** gesetzt ist, **`Authorization: Bearer …`** = **nur** dieser Agent-Key (Open-WebUI-Connection), **niemals** die WebUI-User-ID. **`GET`** / **`DELETE`** für Auflisten bzw. Entfernen von `service_key`s ebenfalls mit diesen Headern (und Bearer falls konfiguriert).
+- **Plugins** (z. B. E-Mail): serverseitig nur `db.user_secret_get_plaintext(user_id, "…")`; **nie** Klartext in Tool-Antworten an das Modell.
+- **Chat-Hilfe:** **`register_secrets`** zum Speichern; **`secrets_help`** für Überblick und Legacy-`curl`. Optional **`AGENT_PUBLIC_URL`** für die Basis-URL in den Vorlagen.
+
+### Gmail (`plugin gmail`)
+
+- **Pro User** ein Secret mit **`service_key`** = **`gmail`**, Wert = **JSON** (ein String, den das Plugin parst):
+  ```json
+  {"email":"du@gmail.com","app_password":"xxxxxxxxxxxxxxxx"}
+  ```
+  Leerzeichen im App-Passwort sind erlaubt (werden beim Einlesen entfernt). Google: **2-Faktor** + **App-Passwort**; normales Login-Passwort funktioniert am IMAP-Endpoint nicht.
+- **Registrieren:** `register_secrets` mit `service_key_example: "gmail"` — im `curl` steht im Feld `secret` bereits ein JSON-Platzhalter; **E-Mail und App-Passwort lokal eintragen**, Befehl im Terminal ausführen.
+- **Zugriff:** IMAP **`imap.gmail.com:993`**, Standard-Mailbox **`INBOX`** (Parameter `mailbox` bei Bedarf).
+- **Tools:** **`gmail_search`** (Gmail-Suchsyntax wie in der Web-UI), **`gmail_read`** (`uid` aus der Suche), **`gmail_collect_for_summary`** (mehrere Mails → Auszüge; das **Modell** soll daraus eine Zusammenfassung formulieren). **Keine** Mail-Inhalte absichtlich vollständig spammen: `limit` / `max_body_chars` / `max_messages` beachten.
 
 ---
 
