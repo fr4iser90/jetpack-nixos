@@ -72,7 +72,7 @@ Follow the [NixOS manual](https://nixos.org/manual/nixos/stable/index.html#sec-i
 At minimum you need:
 
 - a disk layout (`hardware-configuration.nix` / `fileSystems.*`)
-- at least one user (`users.users.*`) or another way to log in after first boot
+- a way to log in after first boot (e.g. set a root password, SSH key, or create a user via `users.users.*`)
 
 Then, include the following in your `configuration.nix` before installing:
 ```nix
