@@ -13,7 +13,7 @@ from typing import Any, Callable
 from .. import db
 from .. import identity
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 PLUGIN_ID = "gmail"
 
 # Stored via register_secrets / POST user/secrets — this plugin reads it server-side only.
@@ -188,17 +188,22 @@ def gmail_search(arguments: dict[str, Any]) -> str:
         except Exception:
             pass
 
-    return json.dumps(
-        {
-            "ok": True,
-            "mailbox": mailbox,
-            "gmail_query": q,
-            "count": len(rows),
-            "messages": rows,
-            "hint": "Use gmail_read with uid from a row to fetch full text.",
-        },
-        ensure_ascii=False,
-    )
+    out: dict[str, Any] = {
+        "ok": True,
+        "credentials_ok": True,
+        "mailbox": mailbox,
+        "gmail_query": q,
+        "count": len(rows),
+        "messages": rows,
+        "hint": "Use gmail_read with uid from a row to fetch full text.",
+    }
+    if not rows:
+        out["empty_result_note_de"] = (
+            "IMAP-Anmeldung und Suche liefen; es gab **keine Treffer** für diese Gmail-Abfrage. "
+            "Das ist **nicht** dasselbe wie „kein Secret“ (dann wäre ok:false mit error). "
+            "Query verfeinern, z. B. `angel`, `subject:angel`, `in:anywhere angel`, `newer_than:30d`."
+        )
+    return json.dumps(out, ensure_ascii=False)
 
 
 def gmail_read(arguments: dict[str, Any]) -> str:
