@@ -16,6 +16,7 @@
         modules = [
           ./configuration.nix
           jetpack.nixosModules.default
+          jetpack.nixosModules.examples-home
         ];
       };
     };

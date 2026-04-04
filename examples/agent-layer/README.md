@@ -23,6 +23,21 @@ Open WebUI / curl  →  agent-layer:8080/v1  →  Ollama :11434
 
 ## Schnellstart
 
+### Ein Skript (Initialisierung)
+
+Voraussetzung: dieselben Ordner wie nach Home-Copy (`~/Ollama`, `~/OpenWebUI`, `~/agent-layer`) **oder** Checkout unter `examples/…`.
+
+`initialize-agent.sh` startet **Ollama**, zieht Modelle aus **`ollama-models.json`** (liegt daneben), startet **Open WebUI** und **`docker/`** (Postgres + API). Optional: **`--skip-pull`** wenn die Modelle schon lokal da sind.
+
+```bash
+chmod +x initialize-agent.sh
+./initialize-agent.sh
+```
+
+Danach **Open WebUI** (`http://127.0.0.1:3000`) ersten Nutzer anlegen, dann **OpenAI API**-URL `http://agent-layer:8080/v1`. Details unten bei „Open WebUI“.
+
+### Manuell (docker compose)
+
 ```bash
 docker network create ai-net   # falls noch nicht vorhanden
 

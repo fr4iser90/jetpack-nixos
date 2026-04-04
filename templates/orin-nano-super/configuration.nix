@@ -13,9 +13,11 @@
   hardware.nvidia-jetpack.super = true;
   hardware.graphics.enable = true;
 
-  # For Docker examples under ~/jetpack-nixos/examples (optional: disable if unused).
+  # Docker + GPU in containers; example stacks are copied into each user's $HOME on first boot.
   virtualisation.docker.enable = true;
   hardware.nvidia-container-toolkit.enable = true;
+
+  jetpack-nixos.examplesHome.enable = true;
 
   services.openssh.enable = true;
 

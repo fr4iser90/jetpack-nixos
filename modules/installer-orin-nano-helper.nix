@@ -6,10 +6,14 @@ let
 
   installHint = ''
     Jetson Orin Nano Super — install (flakes):
+      sudo orin-nano-super-install-all           # one wizard: optional disk prep → generate-config → install-orin → nixos-install
+    Or step by step:
       sudo prepare-orin-nano-super-disk          # optional: wipe disk + mount /mnt, or print manual steps
       sudo nixos-generate-config --root /mnt
       sudo install-orin-nano-super
       sudo nixos-install --root /mnt --flake /mnt/etc/nixos#nixos
+    Dry-run (no disk changes):  prepare-orin-nano-super-disk --dry-run
+                                install-orin-nano-super --dry-run [--clean] [--no-nix-check]
     Manual steps only:  prepare-orin-nano-super-disk --manual-only
     Template copy:      /etc/orin-nano-super-template/
   '';

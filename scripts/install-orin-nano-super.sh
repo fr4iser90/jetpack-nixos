@@ -4,14 +4,34 @@ set -euo pipefail
 
 # Install Orin Nano Super flake templates into a mounted NixOS root (default /mnt).
 # Templates: set TEMPLATES_DIR to the directory containing flake.nix (packaged on the ISO).
+#
+# --dry-run: write under /tmp/orin-nano-super-dry.XXXXXX, copy hardware-configuration from
+#            this machine, optional nix validation; does not touch /mnt.
 
-ROOT="${1:-/mnt}"
-TARGET="$ROOT/etc/nixos"
 TEMPLATES_DIR="${TEMPLATES_DIR:-}"
+DRY_RUN=false
+RUN_NIX_CHECK=true
+CLEAN_DRY=false
+ROOT="/mnt"
+TARGET=""
+DRY_BASE=""
 
 die() {
   echo "error: $*" >&2
   exit 1
+}
+
+usage() {
+  cat <<'EOF'
+usage: install-orin-nano-super [options] [ROOT]
+
+  ROOT              install root (default /mnt). Ignored with --dry-run.
+
+  --dry-run         write flake under /tmp/orin-nano-super-dry.*/etc/nixos only;
+                    copy hardware-configuration.nix from /etc/nixos or /mnt/etc/nixos
+  --no-nix-check    skip nix flake metadata / eval / dry-build
+  --clean           with --dry-run, delete the temp dir after a successful run
+EOF
 }
 
 resolve_templates() {
@@ -51,13 +71,72 @@ prompt_secret() {
   printf '%s' "$val"
 }
 
+run_nix_validate() {
+  local flake_dir="$1"
+  command -v nix >/dev/null 2>&1 || {
+    echo "warning: nix not in PATH; skipping validation"
+    return 0
+  }
+  echo "Nix: flake metadata..."
+  nix flake metadata "$flake_dir" --no-write-lock-file >/dev/null
+  echo "Nix: evaluating nixosConfigurations.nixos..."
+  nix eval --accept-flake-config "$flake_dir#nixosConfigurations.nixos.config.networking.hostName" >/dev/null
+  if nix build --help 2>&1 | grep -qF -- '--dry-run'; then
+    echo "Nix: nix build --dry-run (no binaries installed)..."
+    nix build --dry-run --no-link --accept-flake-config "$flake_dir#nixos"
+  else
+    echo "note: this nix has no 'nix build --dry-run'; metadata + eval checks only"
+  fi
+  echo "Nix validation OK."
+}
+
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    --no-nix-check) RUN_NIX_CHECK=false ;;
+    --clean) CLEAN_DRY=true ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      POSITIONAL+=("$arg")
+      ;;
+  esac
+done
+
+if ((${#POSITIONAL[@]} > 1)); then
+  die "too many arguments"
+fi
+if ((${#POSITIONAL[@]} == 1)); then
+  ROOT="${POSITIONAL[0]}"
+fi
+
 resolve_templates
 
-[[ -d "$ROOT" ]] || die "mount root does not exist: $ROOT"
-[[ -f "$ROOT/etc/nixos/hardware-configuration.nix" ]] ||
-  die "missing $ROOT/etc/nixos/hardware-configuration.nix — partition & mount $ROOT first (optional: sudo prepare-orin-nano-super-disk), then: sudo nixos-generate-config --root $ROOT"
-
-mkdir -p "$TARGET"
+if [[ "$DRY_RUN" == true ]]; then
+  DRY_BASE="$(mktemp -d /tmp/orin-nano-super-dry.XXXXXX)"
+  TARGET="$DRY_BASE/etc/nixos"
+  mkdir -p "$TARGET"
+  hw=""
+  for c in /etc/nixos/hardware-configuration.nix /mnt/etc/nixos/hardware-configuration.nix; do
+    if [[ -f "$c" ]]; then
+      hw="$c"
+      break
+    fi
+  done
+  [[ -n "$hw" ]] || die "dry-run: need hardware-configuration.nix at /etc/nixos or /mnt/etc/nixos (run on a NixOS system or after mounting /mnt)"
+  cp "$hw" "$TARGET/hardware-configuration.nix"
+  echo "=== DRY RUN — writing only under $TARGET ==="
+  echo
+else
+  TARGET="$ROOT/etc/nixos"
+  [[ -d "$ROOT" ]] || die "mount root does not exist: $ROOT"
+  [[ -f "$ROOT/etc/nixos/hardware-configuration.nix" ]] ||
+    die "missing $ROOT/etc/nixos/hardware-configuration.nix — partition & mount $ROOT first (optional: sudo prepare-orin-nano-super-disk), then: sudo nixos-generate-config --root $ROOT"
+  mkdir -p "$TARGET"
+fi
 
 echo "Using templates from: $TEMPLATES_DIR"
 echo
@@ -123,6 +202,25 @@ chmod u+rw,go-rwx "$TARGET/local.nix" 2>/dev/null || true
 
 echo
 echo "Wrote $TARGET/{flake.nix,configuration.nix,local.nix}"
+
+if [[ "$DRY_RUN" == true ]]; then
+  if [[ "$RUN_NIX_CHECK" == true ]]; then
+    echo
+    run_nix_validate "$TARGET"
+  fi
+  echo
+  echo "Dry run finished. Your running system and /mnt were not modified."
+  if [[ "$CLEAN_DRY" == true ]]; then
+    rm -rf "$DRY_BASE"
+    echo "Removed temp dir."
+  else
+    echo "Inspect:  $TARGET"
+    echo "Remove:   rm -rf $DRY_BASE"
+    echo "Real install: partition/mount /mnt, nixos-generate-config, then run without --dry-run"
+  fi
+  exit 0
+fi
+
 echo "Next:"
 echo "  sudo nixos-install --root $ROOT --flake $TARGET#nixos"
 echo "Then reboot, log in as '$username', and run: passwd"

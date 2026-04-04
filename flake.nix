@@ -138,6 +138,8 @@
 
       nixosModules.default = import ./modules/default.nix self.overlays.default;
 
+      nixosModules.examples-home = import ./modules/jetpack-examples-home.nix;
+
       overlays.default = final: prev:
         # We've already applied our overlay and should not apply it again.
         # TODO(@connorbaker): Create a general "named overlay" mechanism which provides visibility into which overlays

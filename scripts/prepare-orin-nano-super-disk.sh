@@ -6,6 +6,7 @@ set -euo pipefail
 
 ROOT="/mnt"
 DISK="${DISK:-}"
+DRY_RUN=false
 
 print_manual() {
   cat <<'EOF'
@@ -32,6 +33,9 @@ Manual partitioning (NixOS handbook, UEFI)
 
   Or run automatic partitioning (when you are ready):
        sudo prepare-orin-nano-super-disk
+
+  Dry-run (print commands only, no disk I/O):
+       sudo prepare-orin-nano-super-disk --dry-run
 EOF
 }
 
@@ -52,19 +56,65 @@ set_partition_vars() {
   fi
 }
 
-if [[ "${1:-}" == "--manual-only" ]]; then
-  print_manual
-  exit 0
-fi
+print_would_run() {
+  echo "Would run (example — nothing was executed):"
+  echo "  wipefs -a $DISK"
+  echo "  parted -s $DISK mklabel gpt"
+  echo "  parted -s $DISK mkpart ESP fat32 1MiB 512MiB"
+  echo "  parted -s $DISK set 1 esp on"
+  echo "  parted -s $DISK mkpart primary ext4 512MiB 100%"
+  echo "  partprobe $DISK   # if available"
+  echo "  mkfs.fat -F32 -n boot $P1"
+  echo "  mkfs.ext4 -L nixos -F $P2"
+  echo "  mkdir -p $ROOT"
+  echo "  mount $P2 $ROOT"
+  echo "  mkdir -p $ROOT/boot"
+  echo "  mount $P1 $ROOT/boot"
+  echo
+  echo "Then:"
+  echo "  sudo nixos-generate-config --root $ROOT"
+  echo "  sudo install-orin-nano-super $ROOT"
+  echo "  sudo nixos-install --root $ROOT --flake $ROOT/etc/nixos#nixos"
+}
 
-if [[ -n "${1:-}" && "${1}" != -* ]]; then
-  ROOT="$1"
-fi
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --dry-run) DRY_RUN=true ;;
+    --manual-only)
+      print_manual
+      exit 0
+      ;;
+    -h | --help)
+      echo "usage: prepare-orin-nano-super-disk [--dry-run] [--manual-only] [ROOT]"
+      echo "       prepare-orin-nano-super-disk [MOUNT_ROOT]   (default /mnt)"
+      echo "env:   DISK=/dev/nvme0n1   (optional; for --dry-run used in printed commands)"
+      exit 0
+      ;;
+    *)
+      ARGS+=("$a")
+      ;;
+  esac
+done
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "usage: prepare-orin-nano-super-disk [--manual-only]"
-  echo "       prepare-orin-nano-super-disk [MOUNT_ROOT]   (default /mnt)"
-  echo "env:   DISK=/dev/nvme0n1   (optional, skips disk question)"
+if ((${#ARGS[@]} > 1)); then
+  die "too many arguments (expected at most one mount root)"
+fi
+ROOT="${ARGS[0]:-/mnt}"
+
+if [[ "$DRY_RUN" == true ]]; then
+  echo "=== DRY RUN — no partition tables or filesystems will be changed ==="
+  echo
+  if [[ -z "$DISK" ]]; then
+    lsblk -dpno NAME,SIZE,MODEL,TRAN 2>/dev/null || lsblk || true
+    echo
+    read -r -p "Disk path to show in commands (e.g. /dev/nvme0n1) [/dev/nvme0n1]: " inp
+    DISK="${inp:-/dev/nvme0n1}"
+  fi
+  [[ -n "$DISK" ]] || die "no disk path"
+  set_partition_vars
+  print_would_run
+  echo "No changes made. Reboot or ignore; your system was not modified."
   exit 0
 fi
 

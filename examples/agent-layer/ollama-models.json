@@ -1,0 +1,17 @@
+{
+  "agent_layer_model": "nemotron-3-nano:4b",
+  "models": [],
+  "optional": {
+    "coding_llm": [
+      "qwen2.5-coder:0.5b",
+      "qwen2.5-coder:1.5b",
+      "qwen2.5-coder:3b",
+      "qwen2.5-coder:7b"
+    ],
+    "text_image_vlm": [
+      "qwen3.5:0.8b",
+      "qwen3.5:2b",
+      "qwen3.5:4b"
+    ]
+  }
+}
