@@ -59,6 +59,12 @@ AGENT_TOOL_ROUTER_CATEGORY_ORDER = tuple(
     for x in (os.environ.get("AGENT_TOOL_ROUTER_CATEGORY_ORDER") or "").split(",")
     if x.strip()
 )
+# Remove these registered tool function names from tools[] after routing (comma-separated). Introspection tools are not exempt.
+AGENT_TOOLS_DENYLIST = frozenset(
+    x.strip()
+    for x in (os.environ.get("AGENT_TOOLS_DENYLIST") or "").split(",")
+    if x.strip()
+)
 
 
 def _resolve_database_url() -> str:

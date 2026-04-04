@@ -1,14 +1,16 @@
-"""Introspection: list registered tools and fetch one tool's OpenAI schema from the live registry."""
+"""Introspection: list registered tools and fetch one tool's schema from the live registry (Chat Completions ``tools[]`` shape)."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Callable
 
+from app import config
 from app.registry import get_registry
 from app.tool_name_hints import suggest_tool_names
 
-__version__ = "1.3.0"
+__version__ = "1.4.1"
 TOOL_ID = "tool_help"
 
 
@@ -17,7 +19,7 @@ def list_available_tools(arguments: dict[str, Any]) -> str:
     _ = arguments
     reg = get_registry()
     tools_out: list[dict[str, Any]] = []
-    for spec in reg.openai_tools:
+    for spec in reg.chat_tool_specs:
         fn = spec.get("function") if isinstance(spec, dict) else None
         if not isinstance(fn, dict):
             continue
@@ -92,24 +94,60 @@ def list_tools_in_category(arguments: dict[str, Any]) -> str:
     )
 
 
+def _module_readable_via_read_tool(module_source: str) -> bool:
+    """True if ``module_source`` is ``file:...`` under ``AGENT_TOOLS_EXTRA_DIR`` (same rule as read_tool)."""
+    raw_ex = (config.TOOLS_EXTRA_DIR or "").strip()
+    if not raw_ex or not module_source.startswith("file:"):
+        return False
+    try:
+        mod_path = Path(module_source[5:]).resolve()
+        extra = Path(raw_ex).expanduser().resolve()
+        mod_path.relative_to(extra)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
 def get_tool_help(arguments: dict[str, Any]) -> str:
     """Return full description + parameter schema for a single tool."""
     name = (arguments.get("tool_name") or "").strip()
     if not name:
         return json.dumps({"ok": False, "error": "tool_name is required"})
     reg = get_registry()
-    for spec in reg.openai_tools:
+    for spec in reg.chat_tool_specs:
         fn = spec.get("function") if isinstance(spec, dict) else None
         if not isinstance(fn, dict):
             continue
         if fn.get("name") != name:
             continue
+        meta = reg.meta_entry_for_tool_name(name)
+        module_source: str | None = None
+        if meta:
+            src = meta.get("source")
+            module_source = str(src) if isinstance(src, str) and src.strip() else None
+        readable = _module_readable_via_read_tool(module_source or "")
+        read_tool_hint: str
+        if not module_source:
+            read_tool_hint = "No module path in registry meta for this name (unexpected)."
+        elif readable:
+            read_tool_hint = (
+                "module_source is under AGENT_TOOLS_EXTRA_DIR: read_tool with registered_tool_name or filename works."
+            )
+        else:
+            read_tool_hint = (
+                "module_source is the on-disk path of the defining .py (shipped image or other root). "
+                "read_tool only reads files under AGENT_TOOLS_EXTRA_DIR — do not pass this path to read_tool; "
+                "invoke this tool using parameters above."
+            )
         return json.dumps(
             {
                 "ok": True,
                 "name": name,
                 "description": fn.get("description") or "",
                 "parameters": fn.get("parameters") or {},
+                "module_source": module_source,
+                "readable_via_read_tool": readable,
+                "read_tool_hint": read_tool_hint,
                 "how_to_use": (
                     "The model calls this tool with a JSON object matching "
                     "`parameters.properties`; required keys are in `parameters.required`."

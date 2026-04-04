@@ -17,6 +17,10 @@ import httpx
 __version__ = "1.3.1"
 TOOL_ID = "web_search"
 AGENT_TOOL_ROUTER_CATEGORY = "web_search"
+AGENT_TOOL_ROUTER_CATEGORY_LABEL = "Web search"
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = (
+    "Search the web via Tavily, Brave, or DuckDuckGo (ddgs); optional page fetch where allowed."
+)
 AGENT_TOOL_ROUTER_TRIGGERS = (
     "web search",
     "search the web",

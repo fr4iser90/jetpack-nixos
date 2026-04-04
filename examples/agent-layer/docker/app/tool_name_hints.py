@@ -1,4 +1,4 @@
-"""Fuzzy tool-name suggestions when models invent wrong OpenAI function names."""
+"""Fuzzy tool-name suggestions when models invent wrong registered tool function names."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ _TOOL_NAME_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _all_openai_tool_names(reg: ToolRegistry) -> list[str]:
+def _all_registered_function_names(reg: ToolRegistry) -> list[str]:
     out: list[str] = []
-    for spec in reg.openai_tools:
+    for spec in reg.chat_tool_specs:
         fn = spec.get("function") if isinstance(spec, dict) else None
         if isinstance(fn, dict):
             n = fn.get("name")
@@ -35,7 +35,7 @@ def suggest_tool_names(reg: ToolRegistry, query: str, *, limit: int = 10) -> lis
     if not q:
         return []
     ql = q.lower()
-    names = _all_openai_tool_names(reg)
+    names = _all_registered_function_names(reg)
     out: list[str] = []
 
     if ql in _TOOL_NAME_ALIASES:

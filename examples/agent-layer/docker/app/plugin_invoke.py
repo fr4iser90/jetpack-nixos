@@ -19,7 +19,7 @@ Example (extra plugin)::
         # ... compute heuristic from data[\"forecast\"] ...
         return json.dumps({"ok": True, "score": 7.2})
 
-Use the **OpenAI function name** (e.g. ``openweather_forecast``), not the file name.
+Use the **registered tool function name** (e.g. ``openweather_forecast``), not the file name.
 Avoid recursion (tool A calling tool A) and very deep chains; see
 ``AGENT_TOOL_CHAIN_MAX_DEPTH`` in ``.env.example``.
 """

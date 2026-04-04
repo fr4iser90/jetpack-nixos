@@ -15,7 +15,7 @@ from agent_tools.tool_factory._tool_factory_common import (
     validate_module_text,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.3.0"
 TOOL_ID = "replace_tool"
 AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
 AGENT_TOOL_ROUTER_TRIGGERS = ()
@@ -71,9 +71,12 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "filename": {"type": "string"},
-                    "openai_tool_name": {"type": "string", "description": "Alternative to filename when the tool lives under AGENT_TOOLS_EXTRA_DIR"},
-                    "tool_name": {"type": "string", "description": "Alias for openai_tool_name"},
-                    "name": {"type": "string", "description": "Alias for openai_tool_name"},
+                    "registered_tool_name": {
+                        "type": "string",
+                        "description": "Alternative to filename when the tool lives under AGENT_TOOLS_EXTRA_DIR",
+                    },
+                    "tool_name": {"type": "string", "description": "Alias for registered_tool_name"},
+                    "name": {"type": "string", "description": "Alias for registered_tool_name"},
                     "source": {"type": "string", "description": "Full replacement module text"},
                 },
                 "required": ["source"],

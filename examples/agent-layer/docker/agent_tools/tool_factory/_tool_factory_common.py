@@ -110,7 +110,7 @@ def resolve_extra_py_filename(*, extra_root: Path, hint: str) -> tuple[str | Non
             ensure_ascii=False,
         )
 
-    snake, terr = tool_authoring.slugify_openai_tool_name(h)
+    snake, terr = tool_authoring.slugify_registered_tool_function_name(h)
     if terr:
         return None, json.dumps({"ok": False, "error": terr}, ensure_ascii=False)
 
@@ -136,12 +136,12 @@ def resolve_extra_py_filename(*, extra_root: Path, hint: str) -> tuple[str | Non
         {
             "ok": False,
             "error": (
-                f"no module under AGENT_TOOLS_EXTRA_DIR exports OpenAI tool name {snake!r} "
+                f"no module under AGENT_TOOLS_EXTRA_DIR exports registered tool function name {snake!r} "
                 f"(hint: {h!r})"
             ),
             "hint": (
                 "Use list_available_tools for names, list_tools for .py files; "
-                "openai_tool_name must match a tool defined in a file under the extra tool directory."
+                "registered_tool_name must match a tool defined in a file under the extra tool directory."
             ),
             "suggestions": suggest_tool_names(get_registry(), h),
             "read_tool_note": (
@@ -163,7 +163,7 @@ def coalesce_tool_file_target(arguments: dict[str, Any], *, extra_root: Path) ->
             return None, json.dumps({"ok": False, "error": fe}, ensure_ascii=False)
         return fn, None
 
-    for key in ("openai_tool_name", "tool_name", "name"):
+    for key in ("registered_tool_name", "tool_name", "name"):
         v = arguments.get(key)
         if v is None or not str(v).strip():
             continue
@@ -172,8 +172,8 @@ def coalesce_tool_file_target(arguments: dict[str, Any], *, extra_root: Path) ->
     return None, json.dumps(
         {
             "ok": False,
-            "error": "Provide filename (e.g. fishing_index.py) or openai_tool_name / tool_name / name (e.g. fishing_index)",
-            "hint": "openai_tool_name must match a tool implemented in a .py file under AGENT_TOOLS_EXTRA_DIR.",
+            "error": "Provide filename (e.g. fishing_index.py) or registered_tool_name / tool_name / name (e.g. fishing_index)",
+            "hint": "registered_tool_name (or tool_name / name) must match a tool implemented in a .py file under AGENT_TOOLS_EXTRA_DIR.",
         },
         ensure_ascii=False,
     )
@@ -223,7 +223,7 @@ def reject_replace_tool_confused_arguments(arguments: dict[str, Any]) -> str | N
             {
                 "ok": False,
                 "error": "replace_tool always overwrites the whole file; there is no overwrite flag",
-                "hint": "Pass filename (or openai_tool_name) and full source only.",
+                "hint": "Pass filename (or registered_tool_name / tool_name / name) and full source only.",
             },
             ensure_ascii=False,
         )
@@ -412,7 +412,7 @@ def retry_hint_from_response(out: dict[str, Any]) -> tuple[bool, str]:
 
 def ollama_generate_module(
     *,
-    openai_tool_name: str,
+    registered_tool_function_name: str,
     display_hint: str,
     extra_description: str,
     repair_context: str | None = None,
@@ -424,16 +424,16 @@ def ollama_generate_module(
         "- import json\n"
         "- from typing import Any, Callable\n"
         '- set __version__ = "0.1.0"\n'
-        f'- set TOOL_ID = "{openai_tool_name}"\n'
-        f"- define def {openai_tool_name}(arguments: dict[str, Any]) -> str that returns json.dumps(...) "
+        f'- set TOOL_ID = "{registered_tool_function_name}"\n'
+        f"- define def {registered_tool_function_name}(arguments: dict[str, Any]) -> str that returns json.dumps(...) "
         "with UTF-8-safe strings\n"
-        f'- HANDLERS = {{"{openai_tool_name}": {openai_tool_name}}}\n'
+        f'- HANDLERS = {{"{registered_tool_function_name}": {registered_tool_function_name}}}\n'
         "- TOOLS must be a list with EXACTLY this nesting (name goes INSIDE \"function\", never at top level):\n"
         "TOOLS = [\n"
         "    {\n"
         '        "type": "function",\n'
         '        "function": {\n'
-        f'            "name": "{openai_tool_name}",\n'
+        f'            "name": "{registered_tool_function_name}",\n'
         '            "description": "…",\n'
         '            "parameters": {\n'
         '                "type": "object",\n'
@@ -444,7 +444,7 @@ def ollama_generate_module(
         "    },\n"
         "]\n\n"
         "Rules:\n"
-        f"- Exactly one TOOLS entry; HANDLERS has exactly one key \"{openai_tool_name}\".\n"
+        f"- Exactly one TOOLS entry; HANDLERS has exactly one key \"{registered_tool_function_name}\".\n"
     )
     if config.CREATE_TOOL_CODEGEN_ALLOW_NETWORK:
         system += (
@@ -460,13 +460,13 @@ def ollama_generate_module(
         )
     user = (
         f"Implement a tool for this short name / idea: {display_hint}\n"
-        f"OpenAI function name (required, already chosen): {openai_tool_name}\n"
+        f"Registered tool function name (required, already chosen): {registered_tool_function_name}\n"
         f"Extra instructions: {extra_description or '(none)'}\n"
     )
     if repair_context:
         user += (
             "\n\n---\nPrevious module failed validation or the automatic test call. "
-            "Output one full corrected module (same OpenAI function name). Context:\n"
+            "Output one full corrected module (same registered tool function name). Context:\n"
             + repair_context.strip()
         )
     url = f"{config.OLLAMA_BASE_URL}/v1/chat/completions"

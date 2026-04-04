@@ -33,16 +33,6 @@ class _RouterAccum:
 Handler = Callable[[dict[str, Any]], str]
 
 
-def _openai_spec_tool_name(spec: Any) -> str | None:
-    if not isinstance(spec, dict):
-        return None
-    fn = spec.get("function")
-    if isinstance(fn, dict):
-        n = fn.get("name")
-        return str(n) if n else None
-    return None
-
-
 def _path_under_or_equal(child: Path, parent: Path) -> bool:
     try:
         child.resolve().relative_to(parent.resolve())
@@ -83,7 +73,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._handlers: dict[str, Handler] = {}
-        self._openai_tools: list[dict[str, Any]] = []
+        self._chat_tool_specs: list[dict[str, Any]] = []
         self._tools_meta: list[dict[str, Any]] = []
         self._router_cat_tools: dict[str, frozenset[str]] = {}
         self._router_cat_triggers: dict[str, frozenset[str]] = {}
@@ -164,7 +154,7 @@ class ToolRegistry:
                     )
 
             self._handlers = acc_h
-            self._openai_tools = acc_tools
+            self._chat_tool_specs = acc_tools
             self._tools_meta = acc_meta
             self._router_cat_tools = {k: frozenset(v) for k, v in router.tools.items()}
             self._router_cat_triggers = {k: frozenset(v) for k, v in router.triggers.items()}
@@ -174,7 +164,7 @@ class ToolRegistry:
 
     def _clear_storage(self) -> None:
         self._handlers.clear()
-        self._openai_tools.clear()
+        self._chat_tool_specs.clear()
         self._tools_meta.clear()
         self._router_cat_tools = {}
         self._router_cat_triggers = {}
@@ -347,7 +337,7 @@ class ToolRegistry:
             return out
 
     def list_router_category_tools_lite(self, category: str) -> list[dict[str, str]]:
-        """OpenAI tool names + descriptions for one router category; no parameter schemas."""
+        """Registered tool function names + descriptions for one router category; no parameter schemas."""
         c = category.strip().lower()
         with self._lock:
             names = self._router_cat_tools.get(c)
@@ -355,7 +345,7 @@ class ToolRegistry:
                 return []
             name_set = set(names)
             rows: list[dict[str, str]] = []
-            for spec in self._openai_tools:
+            for spec in self._chat_tool_specs:
                 fn = spec.get("function") if isinstance(spec, dict) else None
                 if not isinstance(fn, dict):
                     continue
@@ -400,14 +390,30 @@ class ToolRegistry:
         return next(iter(cats))
 
     @property
-    def openai_tools(self) -> list[dict[str, Any]]:
+    def chat_tool_specs(self) -> list[dict[str, Any]]:
+        """Specs in Chat Completions ``tools[]`` shape (HTTP wire format only; tools are yours)."""
         with self._lock:
-            return list(self._openai_tools)
+            return list(self._chat_tool_specs)
 
     @property
     def tools_meta(self) -> list[dict[str, Any]]:
         with self._lock:
             return list(self._tools_meta)
+
+    def meta_entry_for_tool_name(self, registered_function_name: str) -> dict[str, Any] | None:
+        """
+        First ``tools_meta`` row whose ``tools`` list contains this registered function ``name``
+        (same scan order as load; use when exposing module path to ``get_tool_help``).
+        """
+        n = (registered_function_name or "").strip()
+        if not n:
+            return None
+        with self._lock:
+            for entry in self._tools_meta:
+                tlist = entry.get("tools")
+                if isinstance(tlist, list) and n in tlist:
+                    return dict(entry)
+        return None
 
     def run_tool(self, name: str, arguments: dict[str, Any]) -> str:
         with self._lock:

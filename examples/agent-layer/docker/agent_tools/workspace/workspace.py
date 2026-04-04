@@ -18,6 +18,10 @@ from app import config
 __version__ = "1.0.0"
 TOOL_ID = "workspace"
 AGENT_TOOL_ROUTER_CATEGORY = "workspace"
+AGENT_TOOL_ROUTER_CATEGORY_LABEL = "Workspace"
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = (
+    "List, read, search, and edit text files under AGENT_WORKSPACE_ROOT (host mount)."
+)
 AGENT_TOOL_ROUTER_TRIGGERS = (
     "workspace",
     "local file",

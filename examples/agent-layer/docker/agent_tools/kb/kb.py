@@ -10,6 +10,10 @@ from app import db
 __version__ = "1.0.0"
 TOOL_ID = "kb"
 AGENT_TOOL_ROUTER_CATEGORY = "kb"
+AGENT_TOOL_ROUTER_CATEGORY_LABEL = "Knowledge base"
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = (
+    "Per-user notes in PostgreSQL: append, full-text search, and read (same scope as todos)."
+)
 AGENT_TOOL_ROUTER_TRIGGERS = ("knowledge base", "second brain", "my notes", "notebook")
 
 

@@ -8,11 +8,13 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import config
 from . import db
@@ -40,6 +42,14 @@ app = FastAPI(title="agent-layer", version="0.6.0", lifespan=lifespan)
 app.include_router(user_secrets_router)
 app.include_router(tools_router)
 
+_control_dir = Path(__file__).resolve().parent.parent / "control-panel"
+if _control_dir.is_dir():
+    app.mount(
+        "/control",
+        StaticFiles(directory=str(_control_dir), html=True),
+        name="control_panel",
+    )
+
 _cors_origins = [
     o.strip() for o in os.environ.get("AGENT_CORS_ORIGINS", "*").split(",") if o.strip()
 ]
@@ -58,7 +68,11 @@ app.add_middleware(
 async def optional_api_key(request: Request, call_next):
     if not config.OPTIONAL_API_KEY:
         return await call_next(request)
-    if request.url.path in ("/health", "/v1/models"):
+    path = request.url.path
+    if path in ("/health", "/v1/models"):
+        return await call_next(request)
+    # Root redirect + static UI: no Bearer required; /v1/* still requires AGENT_API_KEY when set.
+    if path == "/" or path == "/control" or path.startswith("/control/"):
         return await call_next(request)
     # OTP minted in chat binds to user_id; no shared Bearer for end users (see register_secrets tool).
     if (
@@ -71,6 +85,17 @@ async def optional_api_key(request: Request, call_next):
     if token != config.OPTIONAL_API_KEY:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
     return await call_next(request)
+
+
+@app.get("/")
+def root():
+    """Browser-friendly entry: control panel when shipped; otherwise a tiny JSON hint."""
+    if _control_dir.is_dir():
+        return RedirectResponse(url="/control/", status_code=307)
+    return {
+        "service": "agent-layer",
+        "hint": "OpenAI API under /v1/ (e.g. POST /v1/chat/completions); GET /health; GET /v1/tools",
+    }
 
 
 @app.get("/health")
@@ -180,8 +205,10 @@ async def chat_completions(request: Request):
     user_id, tenant_id = resolve_user_tenant(request)
     id_token = identity.set_identity(tenant_id, user_id)
 
+    router_hdr = (request.headers.get("X-Agent-Router-Categories") or "").strip() or None
+
     try:
-        result = await chat_completion(work)
+        result = await chat_completion(work, router_categories_header=router_hdr)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

@@ -10,6 +10,10 @@ from app import db
 __version__ = "1.1.1"
 TOOL_ID = "todos"
 AGENT_TOOL_ROUTER_CATEGORY = "todos"
+AGENT_TOOL_ROUTER_CATEGORY_LABEL = "Todos"
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = (
+    "Create, list, and update per-user todos stored in PostgreSQL."
+)
 AGENT_TOOL_ROUTER_TRIGGERS = ("todo", "task", "reminder")
 
 

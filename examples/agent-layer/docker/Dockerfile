@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY app ./app
 COPY agent_tools ./agent_tools
+COPY control-panel ./control-panel
 
 ENV PYTHONUNBUFFERED=1
 

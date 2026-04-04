@@ -1,8 +1,7 @@
-"""Chat completion with tool-call loop against Ollama OpenAI-compatible API."""
+"""Chat completion with tool-call loop; HTTP to Ollama uses the OpenAI-compatible wire format only."""
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import re
@@ -59,7 +58,7 @@ def _http_error_recovery_hint(tool_name: str, result: str) -> str | None:
         "(e.g. OpenWeather `/data/2.5/weather` expects **`q`** for the place name, not `city`). "
         "**401** more often means an invalid or missing key. "
         + fix_strategy
-        + "Next steps: (1) **`read_tool`** the `.py` for this tool (use `openai_tool_name` "
+        + "Next steps: (1) **`read_tool`** the `.py` for this tool (use `registered_tool_name` "
         f"{tool_name!r} or `filename`). (2) Optionally **`search_web`** for the vendor's current API docs. "
         "(3) Apply the fix with **`replace_tool`** and/or **`update_tool`**; use **`https://`**. "
         "(4) Or delegate to built-ins: **`invoke_registered_tool`**(`\"openweather_current\"`, "
@@ -67,8 +66,24 @@ def _http_error_recovery_hint(tool_name: str, result: str) -> str | None:
     )
 
 
-# Client-only keys: never forward to Ollama (not in OpenAI chat schema).
-_BODY_KEYS_STRIP_FROM_OLLAMA = frozenset({"tool_prefetch"})
+# Client-only keys: never forward to Ollama (not in upstream Chat Completions request schema).
+_BODY_KEYS_STRIP_FROM_OLLAMA = frozenset({"tool_prefetch", "agent_router_categories"})
+
+
+def _parse_router_category_tokens(raw: str | None) -> frozenset[str]:
+    if not raw or not str(raw).strip():
+        return frozenset()
+    return frozenset(x.strip().lower() for x in str(raw).split(",") if x.strip())
+
+
+def _parse_router_categories_value(raw: Any) -> frozenset[str]:
+    if raw is None:
+        return frozenset()
+    if isinstance(raw, str):
+        return _parse_router_category_tokens(raw)
+    if isinstance(raw, list):
+        return frozenset(str(x).strip().lower() for x in raw if str(x).strip())
+    return frozenset()
 
 
 def _inject_system_prompt(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -106,7 +121,7 @@ def _merge_tools(body_tools: list[Any] | None) -> list[Any]:
     Open WebUI often sends its own non-empty ``tools`` list; previously that
     replaced our list entirely so the model never saw agent-layer tools.
     """
-    ours = get_registry().openai_tools
+    ours = get_registry().chat_tool_specs
     if not body_tools:
         return ours
     seen = {n for t in ours if (n := _tool_spec_name(t))}
@@ -179,18 +194,13 @@ def _catalog_tool_function(name: str, fn: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _tools_for_chat_request(
-    merged_tools: list[Any],
-    *,
-    full_tool_names: frozenset[str] | None = None,
-) -> list[Any]:
+def _tools_for_chat_request(merged_tools: list[Any]) -> list[Any]:
     """
-    Build tools[] for chat/completions.
+    Build tools[] for Ollama: **nur Katalog-Einträge** (Name, Kurzbeschreibung, minimale parameters).
 
-    Default: every tool is catalog-only (name + description + tiny parameters). Domain tools never ship
-    full JSON Schema unless their name is in ``full_tool_names`` (router category hit).
+    **Volles** JSON-Schema für ein Domänen-Tool gibt es **nicht** in ``tools[]`` — nur in der
+    **Tool-Antwort** von ``get_tool_help(tool_name)`` (stufenweise Erkundung).
     """
-    full = full_tool_names if full_tool_names else frozenset()
     out: list[Any] = []
     for spec in merged_tools:
         if not isinstance(spec, dict):
@@ -200,9 +210,6 @@ def _tools_for_chat_request(
         fn = spec.get("function")
         if not name or not isinstance(fn, dict):
             out.append(spec)
-            continue
-        if name in full:
-            out.append(copy.deepcopy(spec))
             continue
         out.append(_catalog_tool_function(name, fn))
     return out
@@ -273,7 +280,7 @@ def _extract_first_json_object(text: str) -> dict[str, Any] | None:
 
 
 def _known_tool_names() -> set[str]:
-    return {n for t in get_registry().openai_tools if (n := _tool_spec_name(t))}
+    return {n for t in get_registry().chat_tool_specs if (n := _tool_spec_name(t))}
 
 
 def _coerce_params_dict(p: Any) -> dict[str, Any] | None:
@@ -311,7 +318,7 @@ _CONTENT_META_TOOL_NAMES = frozenset(
 def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] | None:
     """
     Some models emit JSON like {\"tool\": \"<name>\", \"parameters\": {...}} in message content
-    instead of OpenAI-style tool_calls.
+    instead of wire-format ``tool_calls``.
     """
     obj = _extract_first_json_object(_unwrap_fenced_json(content))
     if not obj:
@@ -349,15 +356,24 @@ def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] 
 def _content_fallback_args_acceptable(name: str, params: dict[str, Any]) -> bool:
     """Reject synthetic tool_calls that would no-op or loop (e.g. read_tool({}))."""
     if name == "read_tool":
-        return any(str(params.get(k) or "").strip() for k in ("filename", "openai_tool_name", "tool_name", "name"))
+        return any(
+            str(params.get(k) or "").strip()
+            for k in ("filename", "registered_tool_name", "tool_name", "name")
+        )
     if name == "replace_tool":
         if not str(params.get("source") or "").strip():
             return False
-        return any(str(params.get(k) or "").strip() for k in ("filename", "openai_tool_name", "tool_name", "name"))
+        return any(
+            str(params.get(k) or "").strip()
+            for k in ("filename", "registered_tool_name", "tool_name", "name")
+        )
     if name == "update_tool":
         if not str(params.get("old_string") or "").strip():
             return False
-        return any(str(params.get(k) or "").strip() for k in ("filename", "openai_tool_name", "tool_name", "name"))
+        return any(
+            str(params.get(k) or "").strip()
+            for k in ("filename", "registered_tool_name", "tool_name", "name")
+        )
     if name == "create_tool":
         if str(params.get("source") or "").strip():
             return True
@@ -456,7 +472,7 @@ def _synthetic_tool_calls_from_message(
 def _apply_tool_prefetch(messages: list[dict[str, Any]], prefetch: dict[str, Any]) -> None:
     args = {
         k: prefetch[k]
-        for k in ("filename", "openai_tool_name", "tool_name", "name")
+        for k in ("filename", "registered_tool_name", "tool_name", "name")
         if k in prefetch and prefetch[k] is not None and str(prefetch[k]).strip()
     }
     if not args:
@@ -584,10 +600,16 @@ def _log_ollama_round(
     )
 
 
-async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
+async def chat_completion(
+    body: dict[str, Any],
+    *,
+    router_categories_header: str | None = None,
+) -> dict[str, Any]:
     # stream flag is ignored here; Ollama always gets stream=false. Caller may wrap JSON as SSE.
     body.pop("agent_tool_mode", None)
     body.pop("agent_mode", None)
+    extra_cats_body = _parse_router_categories_value(body.pop("agent_router_categories", None))
+    extra_cats_hdr = _parse_router_category_tokens(router_categories_header)
 
     model = body.get("model")
     if not model:
@@ -601,21 +623,22 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
     merged_tools = _merge_tools(body.get("tools"))
     routed_category: str | None = None
     cats = classify_user_tool_categories(last_user_text(messages))
+    cats = cats | extra_cats_body | extra_cats_hdr
     if cats:
         merged_tools = filter_merged_tools_by_categories(merged_tools, cats)
         routed_category = (
             next(iter(cats)) if len(cats) == 1 else "+".join(sorted(cats))
         )
 
-    # Full JSON schemas in the request only when exactly one category matched (saves tokens on multi-intent).
-    if len(cats) == 1:
-        sole = next(iter(cats))
-        full_for_request = get_registry().router_tool_names_for_category(sole)
-    else:
-        full_for_request = frozenset()
-    tools_for_request = _tools_for_chat_request(
-        merged_tools, full_tool_names=full_for_request
-    )
+    # Stufenweise Erkundung: tools[] immer nur Katalog — volles Schema nur via get_tool_help-Antwort.
+    tools_for_request = _tools_for_chat_request(merged_tools)
+    if config.AGENT_TOOLS_DENYLIST:
+        deny = config.AGENT_TOOLS_DENYLIST
+        tools_for_request = [
+            t
+            for t in tools_for_request
+            if (n := _tool_spec_name(t)) is None or n not in deny
+        ]
 
     if tools_for_request:
         names = [n for t in tools_for_request if (n := _tool_spec_name(t))]

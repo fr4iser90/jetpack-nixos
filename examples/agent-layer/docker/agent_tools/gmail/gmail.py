@@ -26,7 +26,9 @@ AGENT_TOOL_ROUTER_TRIGGERS = (
     "app password",
 )
 AGENT_TOOL_ROUTER_CATEGORY_LABEL = "Gmail"
-AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = "E-Mail lesen und suchen (IMAP, User-Secret gmail)."
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = (
+    "Read and search Gmail over IMAP using the per-user `gmail` app-password secret."
+)
 
 # Stored via register_secrets / POST user/secrets — this tool reads it server-side only.
 SECRET_SERVICE_KEY = "gmail"

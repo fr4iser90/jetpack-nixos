@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent layer — Tool-Control</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4d;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #5b9fd4;
+      --err: #e07070;
+      --ok: #7bc96f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 1rem 1.25rem 2rem;
+      line-height: 1.45;
+      max-width: 960px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.5rem; }
+    p.hint { color: var(--muted); font-size: 0.875rem; margin: 0 0 1rem; }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+    }
+    section h2 { font-size: 1rem; margin: 0 0 0.75rem; color: var(--accent); }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.2rem; }
+    input[type="text"], input[type="password"], textarea {
+      width: 100%;
+      padding: 0.45rem 0.55rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.9rem;
+      margin-bottom: 0.65rem;
+    }
+    textarea { font-family: ui-monospace, monospace; min-height: 140px; resize: vertical; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+    .row > div { flex: 1 1 200px; }
+    button {
+      background: var(--accent);
+      color: #0a0e14;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button.secondary { background: var(--border); color: var(--text); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+    pre, .mono {
+      font-family: ui-monospace, monospace;
+      font-size: 0.78rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #status { margin-top: 0.75rem; padding: 0.6rem; border-radius: 6px; font-size: 0.85rem; }
+    #status.ok { background: rgba(123, 201, 111, 0.12); border: 1px solid var(--ok); }
+    #status.err { background: rgba(224, 112, 112, 0.12); border: 1px solid var(--err); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; }
+    .check { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.65rem; font-size: 0.875rem; }
+  </style>
+</head>
+<body>
+  <h1>Agent layer — Tool-Control</h1>
+  <p class="hint">
+    Diese Seite lädt ohne API-Key. Alle Aufrufe unter <span class="mono">/v1/</span> benötigen denselben Bearer wie Open WebUI, wenn <span class="mono">AGENT_API_KEY</span> gesetzt ist.
+    Nur im vertrauenswürdigen Netz bereitstellen.
+  </p>
+
+  <section>
+    <h2>Verbindung</h2>
+    <div class="row">
+      <div>
+        <label for="baseUrl">Basis-URL (leer = diese Origin)</label>
+        <input type="text" id="baseUrl" placeholder="http://127.0.0.1:8088" autocomplete="off" />
+      </div>
+      <div>
+        <label for="apiKey">AGENT_API_KEY (optional)</label>
+        <input type="password" id="apiKey" placeholder="Bearer-Token" autocomplete="off" />
+      </div>
+    </div>
+    <div class="toolbar">
+      <button type="button" id="btnSaveKey">Key merken (Session)</button>
+      <button type="button" class="secondary" id="btnClearKey">Key löschen</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Router (Tools ein-/ausblenden)</h2>
+    <p class="hint" style="margin-top:-0.25rem;">
+      <strong>Stufenweise Erkundung:</strong> In <span class="mono">tools[]</span> ist immer nur der <strong>Katalog</strong> (kurz). Volles Parameter-Schema kommt nur aus der Antwort von <span class="mono">get_tool_help(tool_name)</span> — nach <span class="mono">list_tool_categories</span> → <span class="mono">list_tools_in_category</span>.
+      <strong>Router</strong> begrenzt nur, <em>welche</em> Tools in der Liste sind (letzte User-Nachricht + Trigger); ohne Treffer = alle Tools, ebenfalls nur Katalog.
+    </p>
+    <p class="hint">
+      Zusätzliche Kategorien nur <strong>explizit</strong>: Header <span class="mono">X-Agent-Router-Categories: tool_factory</span> (Proxy/Client) oder JSON <span class="mono">"agent_router_categories": ["tool_factory"]</span> im Chat-Body, falls der Client durchreicht. Open WebUI setzt solche Header meist nicht.
+    </p>
+    <div class="toolbar">
+      <button type="button" class="secondary" id="btnRouterCats">GET /v1/router/categories</button>
+    </div>
+    <pre id="routerCats" class="mono" style="margin-top:0.6rem; display:none; max-height:200px; overflow:auto;"></pre>
+  </section>
+
+  <section>
+    <h2>Registry</h2>
+    <div class="toolbar">
+      <button type="button" id="btnLoadTools">Tools laden</button>
+      <button type="button" class="secondary" id="btnReload">Registry neu laden</button>
+    </div>
+    <div id="status" class="mono" style="display:none;"></div>
+    <div id="toolTableWrap" style="margin-top:0.75rem; display:none;">
+      <table>
+        <thead><tr><th>Name</th><th>Kurzbeschreibung</th></tr></thead>
+        <tbody id="toolRows"></tbody>
+      </table>
+    </div>
+    <details style="margin-top:1rem;">
+      <summary class="muted" style="cursor:pointer; color:var(--muted); font-size:0.85rem;">tools_meta (JSON)</summary>
+      <pre id="toolsMeta" class="mono" style="margin-top:0.5rem; max-height:240px; overflow:auto;"></pre>
+    </details>
+  </section>
+
+  <section>
+    <h2>Tool factory (<span class="mono">create_tool</span>)</h2>
+    <p class="hint" style="margin-top:-0.25rem;">
+      Codegen: <span class="mono">tool_name</span> oder <span class="mono">filename</span> + <span class="mono">description</span> — <span class="mono">source</span> leer lassen.
+      Paste: vollständiges Python-Modul in <span class="mono">source</span> + <span class="mono">filename</span>.
+    </p>
+    <label for="ctToolName">tool_name (Codegen-Hinweis, z. B. fishingIndex)</label>
+    <input type="text" id="ctToolName" autocomplete="off" />
+    <label for="ctFilename">filename (z. B. my_tool.py)</label>
+    <input type="text" id="ctFilename" placeholder="optional.py" autocomplete="off" />
+    <label for="ctDescription">description</label>
+    <textarea id="ctDescription" rows="3" placeholder="Domain-Hinweise für Codegen…"></textarea>
+    <label for="ctSource">source (volles Modul; leer = Codegen)</label>
+    <textarea id="ctSource" rows="8" placeholder="# leer lassen für Ollama-Codegen"></textarea>
+    <label for="ctTestArgs">test_arguments (JSON-Objekt)</label>
+    <textarea id="ctTestArgs" rows="2" placeholder='{}'></textarea>
+    <label class="check"><input type="checkbox" id="ctOverwrite" /> overwrite (bestehende Datei ersetzen)</label>
+    <button type="button" id="btnCreateTool">POST /v1/admin/create-tool</button>
+    <pre id="createResult" class="mono" style="margin-top:0.75rem; display:none; max-height:320px; overflow:auto;"></pre>
+  </section>
+
+  <script>
+(function () {
+  var KEY_STORE = "agentLayerApiKey";
+  var baseEl = document.getElementById("baseUrl");
+  var keyEl = document.getElementById("apiKey");
+  var statusEl = document.getElementById("status");
+  var toolRows = document.getElementById("toolRows");
+  var toolTableWrap = document.getElementById("toolTableWrap");
+  var toolsMetaEl = document.getElementById("toolsMeta");
+  var createResult = document.getElementById("createResult");
+  var routerCatsEl = document.getElementById("routerCats");
+
+  function base() {
+    var u = (baseEl.value || "").trim().replace(/\/$/, "");
+    return u || window.location.origin;
+  }
+
+  function headers(json) {
+    var h = {};
+    if (json) h["Content-Type"] = "application/json";
+    var k = (keyEl.value || "").trim();
+    if (k) h["Authorization"] = "Bearer " + k;
+    return h;
+  }
+
+  function showStatus(ok, msg) {
+    statusEl.style.display = "block";
+    statusEl.className = ok ? "mono ok" : "mono err";
+    statusEl.textContent = msg;
+  }
+
+  function hideStatus() {
+    statusEl.style.display = "none";
+  }
+
+  keyEl.value = sessionStorage.getItem(KEY_STORE) || "";
+
+  document.getElementById("btnSaveKey").onclick = function () {
+    sessionStorage.setItem(KEY_STORE, keyEl.value.trim());
+    showStatus(true, "Key in sessionStorage gespeichert.");
+  };
+  document.getElementById("btnClearKey").onclick = function () {
+    sessionStorage.removeItem(KEY_STORE);
+    keyEl.value = "";
+    showStatus(true, "Key entfernt.");
+  };
+
+  document.getElementById("btnRouterCats").onclick = async function () {
+    routerCatsEl.style.display = "none";
+    hideStatus();
+    try {
+      var r = await fetch(base() + "/v1/router/categories", { headers: headers(false) });
+      var t = await r.text();
+      if (!r.ok) {
+        showStatus(false, r.status + " " + t);
+        return;
+      }
+      try {
+        routerCatsEl.textContent = JSON.stringify(JSON.parse(t), null, 2);
+      } catch (e) {
+        routerCatsEl.textContent = t;
+      }
+      routerCatsEl.style.display = "block";
+      showStatus(true, "Router-Kategorien geladen — ids in .env oder Header verwenden.");
+    } catch (e) {
+      showStatus(false, String(e));
+    }
+  };
+
+  document.getElementById("btnLoadTools").onclick = async function () {
+    hideStatus();
+    toolTableWrap.style.display = "none";
+    toolRows.innerHTML = "";
+    toolsMetaEl.textContent = "";
+    try {
+      var r = await fetch(base() + "/v1/tools", { headers: headers(false) });
+      var t = await r.text();
+      if (!r.ok) {
+        showStatus(false, r.status + " " + t);
+        return;
+      }
+      var data = JSON.parse(t);
+      var tools = data.tools || [];
+      tools.forEach(function (spec) {
+        var fn = spec.function || {};
+        var tr = document.createElement("tr");
+        var name = (fn.name != null ? String(fn.name) : "—");
+        var desc = (fn.description != null ? String(fn.description) : "").slice(0, 200);
+        if (fn.description && String(fn.description).length > 200) desc += "…";
+        tr.innerHTML = "<td class=\"mono\">" + escapeHtml(name) + "</td><td>" + escapeHtml(desc) + "</td>";
+        toolRows.appendChild(tr);
+      });
+      toolTableWrap.style.display = "block";
+      toolsMetaEl.textContent = JSON.stringify(data.tools_meta || [], null, 2);
+      showStatus(true, tools.length + " Tool(s) geladen.");
+    } catch (e) {
+      showStatus(false, String(e));
+    }
+  };
+
+  document.getElementById("btnReload").onclick = async function () {
+    hideStatus();
+    try {
+      var r = await fetch(base() + "/v1/admin/reload-tools", {
+        method: "POST",
+        headers: headers(false),
+      });
+      var t = await r.text();
+      if (!r.ok) {
+        showStatus(false, r.status + " " + t);
+        return;
+      }
+      var data = JSON.parse(t);
+      showStatus(true, "Reload ok — " + (data.tool_count != null ? data.tool_count : "?") + " Tools.");
+    } catch (e) {
+      showStatus(false, String(e));
+    }
+  };
+
+  document.getElementById("btnCreateTool").onclick = async function () {
+    createResult.style.display = "none";
+    var body = {};
+    var tn = document.getElementById("ctToolName").value.trim();
+    var fn = document.getElementById("ctFilename").value.trim();
+    var desc = document.getElementById("ctDescription").value.trim();
+    var src = document.getElementById("ctSource").value.trim();
+    var ta = document.getElementById("ctTestArgs").value.trim();
+    if (tn) body.tool_name = tn;
+    if (fn) body.filename = fn;
+    if (desc) body.description = desc;
+    if (src) body.source = src;
+    if (document.getElementById("ctOverwrite").checked) body.overwrite = true;
+    if (ta) {
+      try {
+        body.test_arguments = JSON.parse(ta);
+        if (typeof body.test_arguments !== "object" || body.test_arguments === null || Array.isArray(body.test_arguments)) {
+          showStatus(false, "test_arguments muss ein JSON-Objekt sein.");
+          return;
+        }
+      } catch (e) {
+        showStatus(false, "test_arguments: ungültiges JSON — " + e);
+        return;
+      }
+    }
+    if (!src && !tn && !fn) {
+      showStatus(false, "Für Codegen mindestens tool_name oder filename setzen.");
+      return;
+    }
+    hideStatus();
+    try {
+      var r = await fetch(base() + "/v1/admin/create-tool", {
+        method: "POST",
+        headers: headers(true),
+        body: JSON.stringify(body),
+      });
+      var t = await r.text();
+      var pretty;
+      try {
+        pretty = JSON.stringify(JSON.parse(t), null, 2);
+      } catch (e) {
+        pretty = t;
+      }
+      createResult.textContent = pretty;
+      createResult.style.display = "block";
+      if (!r.ok) showStatus(false, "HTTP " + r.status);
+      else showStatus(true, "Antwort unten (ok prüfen).");
+    } catch (e) {
+      showStatus(false, String(e));
+    }
+  };
+
+  function escapeHtml(s) {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+})();
+  </script>
+</body>
+</html>

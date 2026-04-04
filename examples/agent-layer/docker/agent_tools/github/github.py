@@ -16,6 +16,10 @@ from app import identity
 __version__ = "1.0.0"
 TOOL_ID = "github"
 AGENT_TOOL_ROUTER_CATEGORY = "github"
+AGENT_TOOL_ROUTER_CATEGORY_LABEL = "GitHub"
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = (
+    "Search code and issues, list PRs, read files via GitHub REST (token or user secret github_pat)."
+)
 AGENT_TOOL_ROUTER_TRIGGERS = (
     "github",
     "repository",

@@ -15,7 +15,7 @@ from agent_tools.tool_factory._tool_factory_common import (
     validate_module_text,
 )
 
-__version__ = "1.2.0"
+__version__ = "1.4.0"
 TOOL_ID = "update_tool"
 AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
 AGENT_TOOL_ROUTER_TRIGGERS = ()
@@ -41,7 +41,7 @@ def update_tool(arguments: dict[str, Any]) -> str:
                 "error": "old_string is required (exact substring from read_tool output)",
                 "hint": (
                     "update_tool is a text patch, not codegen. Use create_tool with tool_name/description to regenerate, "
-                    "or replace_tool with full source. Optional: read_tool with openai_tool_name first."
+                    "or replace_tool with full source. Optional: read_tool with registered_tool_name first."
                 ),
             },
             ensure_ascii=False,
@@ -126,7 +126,7 @@ TOOLS: list[dict[str, Any]] = [
             "name": "update_tool",
             "description": (
                 "Patch a dynamic tool module under AGENT_TOOLS_EXTRA_DIR: old_string → new_string (not codegen). "
-                "Use filename **or** openai_tool_name / tool_name / name (e.g. fishing_index). "
+                "Use filename **or** registered_tool_name / tool_name / name (e.g. fishing_index). "
                 "Do NOT pass overwrite/description/source here — those belong on create_tool or replace_tool. "
                 "Unless replace_all is true, old_string must match exactly once. "
                 "Flow: read_tool (same identifier) → update_tool. Full file: replace_tool."
@@ -135,12 +135,12 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "filename": {"type": "string", "description": "Basename e.g. fishing_index.py"},
-                    "openai_tool_name": {
+                    "registered_tool_name": {
                         "type": "string",
-                        "description": "OpenAI tool name if file is under AGENT_TOOLS_EXTRA_DIR (alternative to filename)",
+                        "description": "Registered tool function name if file is under AGENT_TOOLS_EXTRA_DIR (alternative to filename)",
                     },
-                    "tool_name": {"type": "string", "description": "Alias for openai_tool_name"},
-                    "name": {"type": "string", "description": "Alias for openai_tool_name"},
+                    "tool_name": {"type": "string", "description": "Alias for registered_tool_name"},
+                    "name": {"type": "string", "description": "Alias for registered_tool_name"},
                     "old_string": {"type": "string", "description": "Exact substring to replace (use enough context to be unique)"},
                     "new_string": {"type": "string", "description": "Replacement text (may be empty to delete old_string)"},
                     "replace_all": {

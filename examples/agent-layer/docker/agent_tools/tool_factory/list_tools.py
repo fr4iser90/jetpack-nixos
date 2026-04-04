@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from agent_tools.tool_factory._tool_factory_common import extra_root_or_error
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 TOOL_ID = "list_tools"
 AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
 AGENT_TOOL_ROUTER_TRIGGERS = ()
@@ -25,8 +25,12 @@ def list_tools(arguments: dict[str, Any]) -> str:
             "ok": True,
             "directory": str(root),
             "files": names,
-            "hint": "Basenames in AGENT_TOOLS_EXTRA_DIR only; read_tool / update_tool (patch) / replace_tool (full). "
-            "For registered OpenAI tool names after reload, use list_available_tools.",
+            "hint": (
+                "Basenames in AGENT_TOOLS_EXTRA_DIR only (extra/dynamic .py). "
+                "Built-in tools from the image (openweather_*, github_*, etc.) do not appear here. "
+                "read_tool/update_tool/replace_tool apply only to files in this list. "
+                "For all registered tool function names, use list_available_tools."
+            ),
         },
         ensure_ascii=False,
     )
@@ -43,7 +47,7 @@ TOOLS: list[dict[str, Any]] = [
             "name": "list_tools",
             "description": (
                 "List .py basenames in AGENT_TOOLS_EXTRA_DIR (writable tool-module directory, top level only). "
-                "Not the same as list_available_tools (that lists registered OpenAI tools)."
+                "Not the same as list_available_tools (that lists all registered tool names)."
             ),
             "parameters": {"type": "object", "properties": {}},
         },

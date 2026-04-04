@@ -32,9 +32,16 @@ AGENT_TOOL_ROUTER_TRIGGERS = (
     "plugin",
     "extra tool",
     "agent_tools",
+    # Exact tool ids only — avoid vague words (otherwise the whole category matches too often).
+    "update_tool",
+    "read_tool",
+    "replace_tool",
+    "rename_tool",
 )
 AGENT_TOOL_ROUTER_CATEGORY_LABEL = "Tool factory"
-AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = "Extra-Tool-Module unter AGENT_TOOLS_EXTRA_DIR anlegen und bearbeiten."
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = (
+    "Create, list, read, patch, replace, and rename dynamic .py tools under AGENT_TOOLS_EXTRA_DIR."
+)
 
 # Models often send garbage in ``source`` (e.g. "module_name") and put real code in ``source_content``.
 _BOGUS_SOURCE_LITERALS = frozenset(
@@ -171,7 +178,7 @@ def create_tool(arguments: dict[str, Any]) -> str:
                 },
                 ensure_ascii=False,
             )
-        snake, terr = tool_authoring.slugify_openai_tool_name(hint)
+        snake, terr = tool_authoring.slugify_registered_tool_function_name(hint)
         if terr:
             return json.dumps({"ok": False, "error": terr}, ensure_ascii=False)
         fn, fe = tool_authoring.sanitize_tool_filename(f"{snake}.py")
@@ -197,7 +204,7 @@ def create_tool(arguments: dict[str, Any]) -> str:
 
         for attempt in range(max_at):
             text, gen_err = ollama_generate_module(
-                openai_tool_name=snake,
+                registered_tool_function_name=snake,
                 display_hint=hint,
                 extra_description=extra_desc,
                 repair_context=fix_hint,

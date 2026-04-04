@@ -9,7 +9,7 @@ from app import config
 
 from agent_tools.tool_factory._tool_factory_common import coalesce_tool_file_target, extra_root_or_error
 
-__version__ = "1.1.0"
+__version__ = "1.3.0"
 TOOL_ID = "read_tool"
 AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
 AGENT_TOOL_ROUTER_TRIGGERS = ()
@@ -26,7 +26,19 @@ def read_tool(arguments: dict[str, Any]) -> str:
     assert fn is not None
     dest = root / fn
     if not dest.is_file():
-        return json.dumps({"ok": False, "error": f"not found: {fn}"}, ensure_ascii=False)
+        return json.dumps(
+            {
+                "ok": False,
+                "error": f"not found: {fn}",
+                "hint": (
+                    "read_tool only reads basenames under AGENT_TOOLS_EXTRA_DIR (extra / dynamic plugins). "
+                    "Built-in tools (e.g. openweather_current) are loaded from the image's agent_tools/ tree — "
+                    "there is no .py path for them here. Use get_tool_help(\"tool_name\") for the schema; "
+                    "list_tools lists only files in the extra directory."
+                ),
+            },
+            ensure_ascii=False,
+        )
     try:
         text = dest.read_text(encoding="utf-8")
     except OSError as e:
@@ -55,21 +67,23 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "read_tool",
             "description": (
-                "Return full UTF-8 source of one .py file under AGENT_TOOLS_EXTRA_DIR "
-                "(same size limit as create_tool). "
-                "Supply filename **or** openai_tool_name (registered tool name, e.g. fishing_index) — "
-                "no need to guess the .py name when it matches a tool loaded from that directory."
+                "Return full UTF-8 source of one .py file located **only** under AGENT_TOOLS_EXTRA_DIR "
+                "(the writable extra-tools mount, same as create_tool/update_tool). "
+                "**Do not** pass names of built-in image tools (e.g. openweather_current.py) — those modules are "
+                "not in that directory; use get_tool_help(\"openweather_current\") for schema, not read_tool. "
+                "Use filename **or** registered_tool_name when the tool is registered **from** the extra dir "
+                "(e.g. biting_index). Call list_tools first to see valid basenames."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "filename": {"type": "string", "description": "Basename e.g. fishing_index.py"},
-                    "openai_tool_name": {
+                    "registered_tool_name": {
                         "type": "string",
-                        "description": "Exact OpenAI function name (e.g. fishing_index) if the module lives under AGENT_TOOLS_EXTRA_DIR",
+                        "description": "Exact registered tool function name (e.g. fishing_index) if the module lives under AGENT_TOOLS_EXTRA_DIR",
                     },
-                    "tool_name": {"type": "string", "description": "Alias for openai_tool_name"},
-                    "name": {"type": "string", "description": "Alias for openai_tool_name"},
+                    "tool_name": {"type": "string", "description": "Alias for registered_tool_name"},
+                    "name": {"type": "string", "description": "Alias for registered_tool_name"},
                 },
             },
         },

@@ -50,9 +50,9 @@ _FORBIDDEN_FROM_OS_NAMES = frozenset(
 )
 
 
-def slugify_openai_tool_name(raw: str) -> tuple[str | None, str | None]:
+def slugify_registered_tool_function_name(raw: str) -> tuple[str | None, str | None]:
     """
-    Map a short hint like ``fishingIndex`` → ``fishing_index`` for filename + OpenAI function name.
+    Map a short hint like ``fishingIndex`` → ``fishing_index`` for filename + registered tool function name.
     """
     s = (raw or "").strip()
     if not s:
@@ -192,7 +192,7 @@ def validate_registry_tool_exports(mod: Any) -> str | None:
     handlers = getattr(mod, "HANDLERS", None)
     if isinstance(tools, dict):
         return (
-            "TOOLS must be a **list** of OpenAI specs "
+            "TOOLS must be a **list** of Chat Completions tool entries "
             '[{"type":"function","function":{"name":"my_tool","description":"...","parameters":{...}}}, ...], '
             "not a dict. Use HANDLERS = {\"my_tool\": callable} for name → function. "
             "See docker/extra_tools/sample_echo.py or call get_tool_help(\"create_tool\")."
@@ -211,7 +211,7 @@ def validate_registry_tool_exports(mod: Any) -> str | None:
         fn = spec.get("function")
         if not isinstance(fn, dict):
             return (
-                f"TOOLS[{i}] must nest the OpenAI function under key \"function\": "
+                f"TOOLS[{i}] must nest the function object under key \"function\" (Chat tools[] shape): "
                 '{{"type": "function", "function": {{"name": "...", "description": "...", '
                 '"parameters": {{...}}}}}} — not name at the top level of TOOLS[{i}].'
             )

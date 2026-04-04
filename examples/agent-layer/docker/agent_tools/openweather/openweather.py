@@ -18,6 +18,10 @@ import httpx
 __version__ = "1.2.0"
 TOOL_ID = "openweather"
 AGENT_TOOL_ROUTER_CATEGORY = "openweather"
+AGENT_TOOL_ROUTER_CATEGORY_LABEL = "OpenWeather"
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = (
+    "Current weather and 5-day / 3-hour forecast using OpenWeather 2.5 APIs (OPENWEATHER_API_KEY)."
+)
 AGENT_TOOL_ROUTER_TRIGGERS = (
     "openweather",
     "weather",

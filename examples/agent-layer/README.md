@@ -50,7 +50,8 @@ docker compose build && docker compose up -d
 ```
 
 - Health: `curl -s http://127.0.0.1:8088/health`
-- Tools: `curl -s http://127.0.0.1:8088/v1/tools | jq .tools`
+- Tools: `curl -s http://127.0.0.1:8088/v1/tools | jq .tools` (Chat-`tools[]`-Form wie am HTTP-Endpunkt) und `jq .tools_meta` (Registry-Meta pro Modul)
+- **Tool-Control (Browser):** `http://127.0.0.1:8088/control/` — oder nur **`http://127.0.0.1:8088/`** (Redirect nach `/control/`). Liste, Registry-Reload, Formular für `create_tool` per **`POST /v1/admin/create-tool`**. Die Seite selbst braucht keinen Bearer; **`/v1/*`** weiterhin mit `AGENT_API_KEY`, falls gesetzt (Key im UI eintragen oder nur im LAN nutzen).
 
 ## Open WebUI
 
@@ -89,11 +90,15 @@ Details und **Checkliste** der Tools: [TOOLS.md](./TOOLS.md).
 | GET | `/v1/models` | Proxy zu Ollama |
 | POST | `/v1/chat/completions` | Chat + Tool-Loop |
 | GET | `/v1/tools` | Schemas + Tool-Meta |
+| GET | `/v1/router/categories` | Router-Kategorie-IDs (für Presets / Doku) |
+| GET | `/control/` | Mini Tool-Control-UI (siehe Schnellstart) |
 | POST | `/v1/admin/reload-tools` | Registry neu laden |
+| POST | `/v1/admin/create-tool` | Wie Chat-Tool `create_tool` (JSON-Body) |
 | GET/POST/DELETE | `/v1/user/secrets` | Pro-User-Geheimnisse (verschlüsselt), siehe [TOOLS.md](./TOOLS.md#user-secrets) |
 | POST | `/v1/user/secrets/register-with-otp` | Secret speichern mit Einmalkennwort aus Tool `register_secrets` (ohne Bearer) |
 
 ## Siehe auch
 
 - `docker/compose.yaml` — Postgres, Ports, Kommentare zu Env-Vars.
+- `docker/control-panel/` — statische Operator-UI für Tools + Factory.
 - `docker/extra_tools/sample_echo.py` — Minimal-Extra-Tool.
