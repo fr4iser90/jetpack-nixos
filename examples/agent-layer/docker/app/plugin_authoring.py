@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
+import os
 import re
+import sys
+import tempfile
+import uuid
 from typing import Any
 
 _FILENAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]*\.py\Z")
@@ -175,3 +180,91 @@ def validate_plugin_source(source: str) -> str | None:
     checker = _PluginAstChecker()
     checker.visit(tree)
     return checker.error
+
+
+def validate_registry_tool_exports(mod: Any) -> str | None:
+    """
+    Match the expectations of ``ToolRegistry._register_module``: each ``TOOLS`` entry must be
+    ``{\"type\": \"function\", \"function\": {\"name\": ..., \"description\": ..., \"parameters\": dict}}``.
+    Models often wrongly put ``name`` at the top level of the tool dict — that is rejected here.
+    """
+    tools = getattr(mod, "TOOLS", None)
+    handlers = getattr(mod, "HANDLERS", None)
+    if not isinstance(tools, list) or not tools:
+        return "TOOLS must be a non-empty list"
+    if not isinstance(handlers, dict) or not handlers:
+        return "HANDLERS must be a non-empty dict"
+
+    tool_names: list[str] = []
+    for i, spec in enumerate(tools):
+        if not isinstance(spec, dict):
+            return f"TOOLS[{i}] must be a dict"
+        if spec.get("type") != "function":
+            return f'TOOLS[{i}] must have "type": "function"'
+        fn = spec.get("function")
+        if not isinstance(fn, dict):
+            return (
+                f"TOOLS[{i}] must nest the OpenAI function under key \"function\": "
+                '{{"type": "function", "function": {{"name": "...", "description": "...", '
+                '"parameters": {{...}}}}}} — not name at the top level of TOOLS[{i}].'
+            )
+        name = fn.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return (
+                f"TOOLS[{i}].function must have a non-empty string \"name\" "
+                f'(inside the "function" object, not at the root of TOOLS[{i}])'
+            )
+        params = fn.get("parameters")
+        if not isinstance(params, dict):
+            return f"TOOLS[{i}].function.parameters must be a dict (JSON Schema object)"
+        tool_names.append(name.strip())
+
+    if len(tool_names) != len(set(tool_names)):
+        return "duplicate function.name values in TOOLS — each name must appear once"
+
+    valid: list[str] = []
+    for name in tool_names:
+        h = handlers.get(name)
+        if not callable(h):
+            return f'HANDLERS must contain a callable for tool name "{name}"'
+        valid.append(name)
+
+    if not valid:
+        return "no tool names could be matched to HANDLERS callables"
+
+    for declared in handlers:
+        if declared not in tool_names:
+            return (
+                f'HANDLERS contains key "{declared}" with no matching TOOLS[].function.name — '
+                "remove it or add a TOOLS entry."
+            )
+    return None
+
+
+def validate_plugin_registry_exports(source: str) -> str | None:
+    """
+    Load *source* in a temporary file (unique module name), run ``validate_registry_tool_exports``,
+    then unload. Catches invalid TOOLS shape before writing to ``AGENT_PLUGINS_EXTRA_DIR``.
+    """
+    mod_name = f"_agent_plugin_validate_{uuid.uuid4().hex}"
+    path: str | None = None
+    try:
+        fd, path = tempfile.mkstemp(suffix=".py", text=True)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(source)
+        spec = importlib.util.spec_from_file_location(mod_name, path)
+        if spec is None or spec.loader is None:
+            return "internal error: could not build module spec"
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[mod_name] = mod
+        spec.loader.exec_module(mod)
+        return validate_registry_tool_exports(mod)
+    except Exception as e:
+        return f"failed to load plugin for validation: {e}"
+    finally:
+        sys.modules.pop(mod_name, None)
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass

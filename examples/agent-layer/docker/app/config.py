@@ -147,6 +147,8 @@ CREATE_TOOL_CODEGEN_MODEL = (
     os.environ.get("AGENT_CREATE_TOOL_CODEGEN_MODEL") or "qwen2.5-coder:3b"
 ).strip()
 CREATE_TOOL_CODEGEN_TIMEOUT = _env_int("AGENT_CREATE_TOOL_CODEGEN_TIMEOUT", 120)
+# Codegen prompt: allow httpx/urllib HTTP (keys only via os.environ — set in compose .env).
+CREATE_TOOL_CODEGEN_ALLOW_NETWORK = _env_bool("AGENT_CREATE_TOOL_CODEGEN_ALLOW_NETWORK", False)
 
 
 def tool_log_redact_keys() -> frozenset[str]:

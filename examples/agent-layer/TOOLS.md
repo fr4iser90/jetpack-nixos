@@ -19,7 +19,11 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 | [x] | `get_tool_help` | `tool_help` | Hilfe zu einem Tool nach Namen (`tool_name`). |
 | [x] | `register_secrets` | `register_secrets` | Secret registrieren: Einmalcode + fertiger `curl` (OTP-Flow); nur in `register_secrets.py`. |
 | [x] | `secrets_help` | `secrets_help` | Statische Hilfe zu User-Secrets; **kein** OTP — OTP nur aus `register_secrets`. |
-| [x] | `create_tool` | `create_tool` | Schreibt Extra-Plugin (`.py` mit `TOOLS`+`HANDLERS`); nur wenn `AGENT_CREATE_TOOL_ENABLED=true` und beschreibbarer `AGENT_PLUGINS_EXTRA_DIR`. |
+| [x] | `create_tool` | `create_tool` | Neues Extra-Plugin (Quelltext oder Codegen via Ollama); `AGENT_CREATE_TOOL_ENABLED=true` + beschreibbares Extra-Verzeichnis. |
+| [x] | `list_extra_plugins` | `create_tool` | Dateinamen (`.py`, eine Ebene) im Extra-Plugin-Ordner. |
+| [x] | `read_extra_plugin` | `create_tool` | Vollständigen Quelltext einer Extra-Plugin-Datei zurückgeben. |
+| [x] | `update_extra_plugin` | `create_tool` | Bestehende Extra-Plugin-Datei ersetzen (Syntax/AST-Check, Reload). |
+| [x] | `rename_extra_plugin` | `create_tool` | Extra-Plugin-Datei umbenennen (Reload). |
 | [x] | `gmail_search` | `gmail` | Gmail-Suche (IMAP `X-GM-RAW`, z. B. `newer_than:7d is:unread`). |
 | [x] | `gmail_read` | `gmail` | Eine Mail per IMAP-UID lesen (Plain-Text-Body, gekürzt). |
 | [x] | `gmail_collect_for_summary` | `gmail` | Mehrere Mails laden → `combined_excerpt`; Modell fasst für den Nutzer zusammen. |
@@ -51,10 +55,12 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 
 - **Zweck:** Extra-Plugin in **`AGENT_PLUGINS_EXTRA_DIR`** schreiben und Registry neu laden — neue Tool-Namen erscheinen danach in **`list_available_tools`** (Plugin-Datei `create_tool.py`).
 - **Kurzform (ohne `source`):** Nur **`tool_name`** (oder **`name`**) setzen, z. B. `fishingIndex` — der Server ruft Ollama auf (**`AGENT_CREATE_TOOL_CODEGEN_MODEL`**, Default `qwen2.5-coder:3b`; bei Bedarf z. B. `qwen2.5-coder:7b`), erzeugt ein Modul mit genau einem Tool (Snake-Case-Name + Datei `<name>.py`), validiert, schreibt, **`reload_registry`**, und führt **einen Probelauf** (`run_tool`) mit optional **`test_arguments`** aus. **`description`** optional für genauere Codegen-Hinweise (z. B. Beißindex 0–10).
+- **HTTP-APIs im generierten Plugin:** Standard-Codegen **ohne** Netzwerk (nur Heuristiken). **`AGENT_CREATE_TOOL_CODEGEN_ALLOW_NETWORK=true`** erlaubt im Prompt **httpx** / **urllib**; API-Schlüssel **nur** über **`os.environ`** (z. B. `OPENWEATHER_API_KEY` in `docker/.env` + gleiche Variable im `agent-layer`-Service), **nie** im Chat oder als Klartext im Quelltext. Alternativ: **`create_tool` mit vollem `source`** — der AST-Check blockiert **httpx** nicht; so kannst du Wetter-APIs auch ohne dieses Flag bauen.
+- **Iterieren:** **`read_extra_plugin`** → **`update_extra_plugin`** nach Fehlern; **`list_extra_plugins`** für Überblick; **`rename_extra_plugin`** bei Dateinamen-Wechsel. Kleine Chat-Modelle rufen oft `get_tool_help` für noch nicht existierende Namen auf — Nutzer-Prompt explizit: „Nutze **`create_tool`** mit `tool_name`, nicht `get_tool_help`.“
 - **Klassisch:** **`filename`** + **`source`** wie bisher (voller Quelltext).
 - **Aktivierung:** `AGENT_CREATE_TOOL_ENABLED=true` — wenn **`AGENT_PLUGINS_EXTRA_DIR`** nicht gesetzt ist, verwendet der Agent **`/data/plugins`** (Compose-Volume z. B. **`./extra_plugins:/data/plugins:rw`**). Anderen Pfad nur bei Bedarf setzen. Optional **`AGENT_CREATE_TOOL_MAX_BYTES`** (Default siehe `config.py`).
 - **Allowlist:** Ist **`AGENT_PLUGINS_ALLOWED_SHA256`** gesetzt und der neue Digest **nicht** darin, liefert das Tool `reload: pending` + **`sha256`** — Betreiber ergänzt die Whitelist und ruft **`POST /v1/admin/reload-plugins`** (oder Neustart).
-- **Aufbau des Quelltexts:** Wie `docker/extra_plugins/sample_echo.py`: Modul mit **`TOOLS`** (OpenAI-Function-Liste), **`HANDLERS`** (Name → Callable), Handler-Funktionen mit `def foo(arguments: dict) -> str` und `return json.dumps(...)`. AST-Check verbietet u. a. `subprocess`, `eval`/`exec`, `os.system` — **kein vollständiger Sandbox**; nur in vertrauenswürdigen Umgebungen aktivieren (**`AGENT_API_KEY`** empfohlen).
+- **Aufbau des Quelltexts:** Wie `docker/extra_plugins/sample_echo.py`: Modul mit **`TOOLS`** (OpenAI-Function-Liste), **`HANDLERS`** (Name → Callable), Handler-Funktionen mit `def foo(arguments: dict) -> str` und `return json.dumps(...)`. Jedes Element von **`TOOLS`** muss **`{\"type\": \"function\", \"function\": {\"name\": \"…\", \"description\": \"…\", \"parameters\": {...}}}`** sein — der **`name`** gehört **unter** `function`, nicht auf die oberste Ebene des Dicts (häufiger Codegen-Fehler; vor dem Schreiben prüft der Agent `validate_plugin_registry_exports`). AST-Check verbietet u. a. `subprocess`, `eval`/`exec`, `os.system` — **kein vollständiger Sandbox**; nur in vertrauenswürdigen Umgebungen aktivieren (**`AGENT_API_KEY`** empfohlen).
 
 **Validiert (manuell / Stack):** Tool-Loop über Agent → Ollama, Einträge in `todos` + `tool_invocations`; Open WebUI mit OpenAI-Base-URL auf den Agent; `stream: true` über SSE-Shim; Tool-Merge mit WebUI-`tools`; Content-JSON-Fallback für Modelle mit `reasoning`-Feld.
 
