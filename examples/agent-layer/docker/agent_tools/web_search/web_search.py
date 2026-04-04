@@ -16,6 +16,15 @@ import httpx
 
 __version__ = "1.3.1"
 TOOL_ID = "web_search"
+AGENT_TOOL_ROUTER_CATEGORY = "web_search"
+AGENT_TOOL_ROUTER_TRIGGERS = (
+    "web search",
+    "search the web",
+    "tavily",
+    "brave search",
+    "duckduckgo",
+    "ddgs",
+)
 
 _TAVILY_URL = "https://api.tavily.com/search"
 _BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"

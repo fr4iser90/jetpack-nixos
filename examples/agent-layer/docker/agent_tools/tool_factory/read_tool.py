@@ -11,6 +11,8 @@ from agent_tools.tool_factory._tool_factory_common import coalesce_tool_file_tar
 
 __version__ = "1.1.0"
 TOOL_ID = "read_tool"
+AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
+AGENT_TOOL_ROUTER_TRIGGERS = ()
 
 
 def read_tool(arguments: dict[str, Any]) -> str:

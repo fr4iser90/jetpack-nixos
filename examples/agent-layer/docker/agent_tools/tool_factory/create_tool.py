@@ -19,8 +19,115 @@ from agent_tools.tool_factory._tool_factory_common import (
     validate_module_text,
 )
 
-__version__ = "1.3.0"
+__version__ = "1.3.2"
 TOOL_ID = "create_tool"
+AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
+AGENT_TOOL_ROUTER_TRIGGERS = (
+    "create_tool",
+    "create tool",
+    "new tool",
+    "codegen",
+    "generate tool",
+    "dynamic tool",
+    "plugin",
+    "extra tool",
+    "agent_tools",
+)
+AGENT_TOOL_ROUTER_CATEGORY_LABEL = "Tool factory"
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = "Extra-Tool-Module unter AGENT_TOOLS_EXTRA_DIR anlegen und bearbeiten."
+
+# Models often send garbage in ``source`` (e.g. "module_name") and put real code in ``source_content``.
+_BOGUS_SOURCE_LITERALS = frozenset(
+    {
+        "",
+        "module_name",
+        "placeholder",
+        "none",
+        "n/a",
+        "string",
+        "python",
+        "code",
+        "source",
+        "todo",
+    }
+)
+
+
+def _unwrap_triple_quoted_module(raw: str) -> str:
+    """
+    Models often paste the whole module as one triple-quoted string (invalid pattern: code only exists
+    inside a string literal). If the file is essentially ``''' ... real code ... '''``, return the inner text.
+    """
+    t = raw.strip()
+    if len(t) < 10:
+        return raw
+    for quote in ("'''", '"""'):
+        if not t.startswith(quote):
+            continue
+        end = t.rfind(quote)
+        if end <= 3:
+            continue
+        inner = t[len(quote) : end].strip()
+        low = inner.lower()
+        if not inner:
+            continue
+        if (
+            "def " in inner
+            or "import " in inner
+            or "tools" in low
+            or "handlers" in low
+        ):
+            return inner
+    return raw
+
+
+def _strip_markdown_fenced_python(raw: str) -> str:
+    t = raw.strip()
+    if not t.startswith("```"):
+        return t
+    lines = t.split("\n")
+    body: list[str] = []
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == "```":
+            break
+        body.append(line)
+    return "\n".join(body).strip()
+
+
+def _effective_source_text(arguments: dict[str, Any]) -> tuple[str, str | None]:
+    """
+    Return (source_text, note). If primary ``source`` is a placeholder, ignore it and try
+    ``source_content`` / ``code`` / ``body``. ``note`` is a short server hint for the model when we fixed args.
+    """
+    raw = arguments.get("source")
+    primary = str(raw).strip() if raw is not None else ""
+    pl = primary.strip().lower()
+    use_primary = bool(primary) and pl not in _BOGUS_SOURCE_LITERALS
+    if use_primary and len(primary) < 48 and "\n" not in primary and "tools" not in pl:
+        # single-token junk like "module_name" without matching literals set (future-proof)
+        if not primary.startswith(("import ", "from ", '"""', "'''")):
+            use_primary = False
+    if use_primary:
+        return primary, None
+
+    for key in ("source_content", "code", "body", "python_source"):
+        alt = arguments.get(key)
+        if alt is None:
+            continue
+        text = _strip_markdown_fenced_python(str(alt).strip())
+        if text:
+            hint = (
+                f"Used {key!r} as module source (primary `source` was empty or a placeholder). "
+                "Next time pass full Python in `source`, or omit `source` for codegen."
+            )
+            return text, hint
+    return "", (
+        "Ignored placeholder `source` (e.g. module_name). "
+        "For codegen: omit `source` and set `tool_name` + `description`. "
+        "For paste: put the full module in `source` or `source_content`."
+        if primary
+        else None
+    )
 
 
 def create_tool(arguments: dict[str, Any]) -> str:
@@ -30,20 +137,36 @@ def create_tool(arguments: dict[str, Any]) -> str:
     assert root is not None
     extra_root = root
 
-    source_raw = arguments.get("source")
-    source_str = str(source_raw).strip() if source_raw is not None else ""
+    source_str, source_note = _effective_source_text(dict(arguments or {}))
+    _before_unwrap = source_str
+    source_str = _unwrap_triple_quoted_module(source_str)
+    if source_str != _before_unwrap:
+        uhint = (
+            "Removed outer '''...''' / \"\"\"...\"\"\" wrapper — the module must be normal Python lines, "
+            "not one giant string literal."
+        )
+        source_note = f"{source_note} {uhint}" if source_note else uhint
     codegen = not source_str
     codegen_model: str | None = None
 
     if codegen:
         hint = str(arguments.get("tool_name") or arguments.get("name") or "").strip()
         if not hint:
+            # Models often pass only filename + description for codegen; derive hint from basename.
+            raw_fn = str(arguments.get("filename") or "").strip()
+            if raw_fn:
+                base = raw_fn.replace("\\", "/").rsplit("/", 1)[-1]
+                if base.lower().endswith(".py"):
+                    base = base[:-3]
+                hint = base.strip()
+        if not hint:
             return json.dumps(
                 {
                     "ok": False,
                     "error": (
-                        "Either pass source+filename, or omit source and set tool_name (or name) "
-                        "so the server can generate code via Ollama (AGENT_CREATE_TOOL_CODEGEN_MODEL)."
+                        "Either pass source+filename, or omit source and set tool_name (or name), "
+                        "or set filename (e.g. my_tool.py) so the server can generate code via Ollama "
+                        "(AGENT_CREATE_TOOL_CODEGEN_MODEL)."
                     ),
                 },
                 ensure_ascii=False,
@@ -129,6 +252,9 @@ def create_tool(arguments: dict[str, Any]) -> str:
             out["codegen_max_attempts"] = max_at
             retry, rhint = retry_hint_from_response(out)
             if not retry:
+                if source_note:
+                    out = dict(out)
+                    out["create_tool_arg_hint"] = source_note
                 return json.dumps(out, ensure_ascii=False)
             fix_hint = (
                 rhint
@@ -138,8 +264,11 @@ def create_tool(arguments: dict[str, Any]) -> str:
             last_body = out
 
         if last_body is not None:
-            last_body["codegen_attempts_exhausted"] = True
-            return json.dumps(last_body, ensure_ascii=False)
+            lb = dict(last_body)
+            lb["codegen_attempts_exhausted"] = True
+            if source_note:
+                lb["create_tool_arg_hint"] = source_note
+            return json.dumps(lb, ensure_ascii=False)
         return json.dumps(
             {
                 "ok": False,
@@ -180,7 +309,7 @@ def create_tool(arguments: dict[str, Any]) -> str:
     except OSError as e:
         return json.dumps({"ok": False, "error": f"write failed: {e}"}, ensure_ascii=False)
 
-    return digest_reload_response(
+    body_str = digest_reload_response(
         fn,
         dest,
         codegen=codegen,
@@ -189,6 +318,15 @@ def create_tool(arguments: dict[str, Any]) -> str:
         test_arguments=coerce_test_args(arguments.get("test_arguments")),
         extra=tool_write_extra_for_digest(backup_path),
     )
+    if source_note:
+        try:
+            out = json.loads(body_str)
+        except json.JSONDecodeError:
+            return body_str
+        if isinstance(out, dict):
+            out["create_tool_arg_hint"] = source_note
+            return json.dumps(out, ensure_ascii=False)
+    return body_str
 
 
 HANDLERS: dict[str, Callable[[dict[str, Any]], str]] = {
@@ -201,10 +339,19 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "create_tool",
             "description": (
-                "Create a new tool module (.py with TOOLS + HANDLERS) under AGENT_TOOLS_EXTRA_DIR. "
-                "(1) filename + source, or (2) omit source: tool_name + optional description → Ollama codegen. "
-                "Codegen retries: AGENT_CREATE_TOOL_CODEGEN_MAX_ATTEMPTS (default 1). "
-                "Related: list_tools, read_tool, update_tool (patch), replace_tool (full file), rename_tool."
+                "Create a new tool module under AGENT_TOOLS_EXTRA_DIR. "
+                "Codegen (preferred for small models): OMIT `source` entirely; set `tool_name` or `filename` (.py) "
+                "and `description` (say: use invoke_registered_tool openweather_forecast). Server runs Ollama. "
+                "Paste mode: raw Python module — TOOLS must be a **list** of {\"type\":\"function\",\"function\":{...}} "
+                "entries; HANDLERS is a **dict** mapping the same function **name** strings to callables. "
+                "Do not wrap the file in '''...''' string literals; do not use TOOLS={\"fn\": func}. "
+                "Handler signature: def my_tool(arguments: dict) -> str returning json.dumps(...). "
+                "Never set `source` to words like module_name — use codegen without source instead. "
+                "`source_content` accepted like `source` (markdown ``` ok). "
+                "Inside plugins: from app.plugin_invoke import invoke_registered_tool — "
+                'invoke_registered_tool returns a JSON string (use json.loads), not a list: '
+                'raw = invoke_registered_tool(\"openweather_forecast\", {\"location\": \"...\"}). '
+                "Related: list_tools, read_tool, replace_tool, rename_tool."
             ),
             "parameters": {
                 "type": "object",
@@ -216,12 +363,22 @@ TOOLS: list[dict[str, Any]] = [
                     "name": {"type": "string", "description": "Alias for tool_name (codegen)."},
                     "description": {
                         "type": "string",
-                        "description": "Codegen: domain hints (e.g. Beißindex 0–10, OpenWeather via httpx).",
+                        "description": (
+                            "Codegen: domain hints (Beißindex, Fenster). "
+                            "Say to use invoke_registered_tool openweather_forecast / openweather_current inside generated code."
+                        ),
                     },
-                    "filename": {"type": "string", "description": "With source: basename e.g. my_tool.py"},
+                    "filename": {
+                        "type": "string",
+                        "description": "With source: target file. Codegen without source: basename used as tool name hint (e.g. bite_index.py).",
+                    },
                     "source": {
                         "type": "string",
-                        "description": "Full module UTF-8 text; omit to trigger codegen.",
+                        "description": "Full module UTF-8 text; omit entirely to trigger codegen (do not send module_name).",
+                    },
+                    "source_content": {
+                        "type": "string",
+                        "description": "Same as source if the model wrongly split fields; optional markdown code fence.",
                     },
                     "overwrite": {"type": "boolean"},
                     "test_arguments": {

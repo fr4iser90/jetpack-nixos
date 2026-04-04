@@ -3,7 +3,7 @@
 Übersicht über **eingebaute** und **geplante** Tools, dazu Ideen für Erweiterungen.  
 Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten Tool-Wurzeln** (`AGENT_TOOL_DIRS` oder Standard: `agent_tools` im Image + optional `AGENT_TOOLS_EXTRA_DIR`). Die Registry scannt **rekursiv** (Domänen-Unterordner wie `github/`, `secrets/`, `calendar/`). Kein Tool ist im HTTP-Core eingetragen. Secrets nur über **`.env`** / Env, siehe `docker/.env.example`.
 
-**Tool-Routing (Subset):** Pro Chat-Request kann der Agent nur eine **Teilmenge** der Tools an Ollama schicken — weniger Verwechslungen (z. B. `workspace_*` vs. `read_tool`). Steuerung: Header **`X-Agent-Mode`**: `full` \| `tool_factory` \| `workspace` \| `default_chat`; oder JSON **`agent_tool_mode`** / **`agent_mode`**; Default **`AGENT_TOOL_MODE`** in `.env`. Ohne expliziten Modus: optional **Keyword-Router** auf der letzten User-Message, optional **LLM-Router** (`AGENT_TOOL_ROUTER_LLM_ENABLED`). Nach fehlgeschlagenem **`workspace_*`** („Workspace disabled“) können folgende Runden auf **`tool_factory`** eingeschränkt werden (`AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY`). **Modellbasiert:** Wenn die Chat-**Modell-ID** Substrings aus **`AGENT_WEAK_TOOL_MODEL_SUBSTRINGS`** enthält (Default `nemotron`, `nano`), werden im Modus **`tool_factory`** die in **`AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS`** genannten Tools weggelassen (Default: **`update_tool`**) — kleine Modelle sollen **`replace_tool`** / **`create_tool`** nutzen statt exakter Patches. **Orchestrierung:** `POST /v1/chat/completions/tool-factory` erzwingt `tool_factory`; optional **`tool_prefetch`**: `{"openai_tool_name":"…"}` — Server führt intern **`read_tool`** aus und hängt den Quelltext an den System-Prompt. Details: `docker/.env.example` → Abschnitt Tool-Routing.
+**Tool-Liste im Chat-Request:** Nach **Merge** werden in `tools[]` standardmäßig nur **Katalog-Einträge** geschickt (Name, Kurzbeschreibung, minimale `parameters`; Domain-Tools **ohne** volles JSON-Schema). **`get_tool_help`** / **`list_tools_in_category`** behalten im Request nur kleine Schemas. **Router-Treffer:** Es werden **alle** Kategorien genutzt, deren Trigger in der letzten User-Message vorkommen (**Vereinigung** der Tool-Mengen) — z. B. gleichzeitig „create_tool“ + „openweather“ → Factory- und Wetter-Tools. **Volles** OpenAI-Schema im Request nur, wenn **genau eine** Kategorie matched; bei **mehreren** bleiben Domain-Tools Katalog-klein (weniger Tokens). Introspection-Tools bleiben immer Katalog-klein. **Stufenweise Erkundung (Tool-Antworten, kein Schema-Müll):** **`list_tool_categories`** → id, Label, Kurzbeschreibung, Tool-Anzahl; **`list_tools_in_category(category)`** → Namen + Kurzbeschreibungen **in dieser** Kategorie; **`list_available_tools`** → flache Liste aller Tools (nur Name + Beschreibung); jeweils **ohne** `parameters`. Volles JSON-Schema nur per **`get_tool_help(tool_name)`** vor dem Aufruf. Optional auf Modulen: **`AGENT_TOOL_ROUTER_CATEGORY_LABEL`**, **`AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION`** (für die Kategorie-Übersicht). Die **letzte User-Message** wird gegen **Trigger** geprüft (`AGENT_TOOL_ROUTER_CATEGORY`, optional `AGENT_TOOL_ROUTER_TRIGGERS`); ohne Treffer bleibt die **volle** Tool-**Liste** (Katalog im Request). Reihenfolge bei mehreren Treffern: **`AGENT_TOOL_ROUTER_CATEGORY_ORDER`** oder Scan-Reihenfolge. Optional: **`tool_prefetch`**. Details: `docker/.env.example`.
 
 ---
 
@@ -19,8 +19,10 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten T
 | [x] | `deep_search` | `web_search` | Tavily: `raw_content`. Ohne: Snippets + **Seitenabruf** wenn `robots.txt` den UA erlaubt (`fetch_status`, `raw_content`). Abschalten: `AGENT_DISABLE_FETCH_DEEP=true`. |
 | [x] | `openweather_current` | `openweather` | Aktuelles Wetter (OpenWeather **`/data/2.5/weather`**, metrisch); Key nur **`OPENWEATHER_API_KEY`**. |
 | [x] | `openweather_forecast` | `openweather` | 5-Tage-Vorschau in **3-Stunden-Schritten** (**`/data/2.5/forecast`**). Für „bestes Fenster“ / Heuristiken; kein offizieller Beißindex in der API. |
-| [x] | `list_available_tools` | `tool_help` | Alle Tools mit Beschreibung + JSON-Schema (Parameter). |
-| [x] | `get_tool_help` | `tool_help` | Hilfe zu einem Tool nach Namen (`tool_name`). |
+| [x] | `list_available_tools` | `tool_help` | Alle Tools: Namen + Kurzbeschreibung; **keine** Parameter-Schemas (→ `get_tool_help`). |
+| [x] | `list_tool_categories` | `tool_help` | Router-Kategorien: id, Label, Kurztext, Tool-Anzahl (→ `list_tools_in_category`). |
+| [x] | `list_tools_in_category` | `tool_help` | Tools **einer** Kategorie: Namen + Kurzbeschreibung; **keine** Schemas (→ `get_tool_help`). |
+| [x] | `get_tool_help` | `tool_help` | **Ein** Tool: volles Schema + `how_to_use` (`tool_name`). |
 | [x] | `register_secrets` | `register_secrets` | Secret registrieren: Einmalcode + fertiger `curl` (OTP-Flow); nur in `register_secrets.py`. |
 | [x] | `secrets_help` | `secrets_help` | Statische Hilfe zu User-Secrets; **kein** OTP — OTP nur aus `register_secrets`. |
 | [x] | `create_tool` | `tool_factory/create_tool.py` | Neues Extra-Tool (Quelltext oder Codegen via Ollama); `AGENT_CREATE_TOOL_ENABLED=true` + beschreibbares Extra-Verzeichnis. |
@@ -54,7 +56,7 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten T
 **Hilfe / „Welche Tools gibt es?“**
 
 - Pro Tool: **`description`** + **`parameters`** im OpenAI-Schema (sieht das Modell in jedem Request).
-- Explizit abfragbar: **`list_available_tools`** (Übersicht), **`get_tool_help`** mit `tool_name` (ein Tool ausführlich + kurzer `how_to_use`-Hinweis).
+- Abfragbar: **`list_tool_categories`** → **`list_tools_in_category(category)`** → **`get_tool_help(tool_name)`**; oder flach **`list_available_tools`** → **`get_tool_help`**.
 
 ### Dynamisches Extra-Tool (`tool_factory/`)
 

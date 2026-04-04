@@ -8,12 +8,12 @@ from typing import Any, Callable
 from app.registry import get_registry
 from app.tool_name_hints import suggest_tool_names
 
-__version__ = "1.1.0"
+__version__ = "1.3.0"
 TOOL_ID = "tool_help"
 
 
 def list_available_tools(arguments: dict[str, Any]) -> str:
-    """Return every tool name, description, and JSON Schema parameters (as registered)."""
+    """Return every tool name and short description only (no parameter schemas — use get_tool_help)."""
     _ = arguments
     reg = get_registry()
     tools_out: list[dict[str, Any]] = []
@@ -27,8 +27,7 @@ def list_available_tools(arguments: dict[str, Any]) -> str:
         tools_out.append(
             {
                 "name": name,
-                "description": fn.get("description") or "",
-                "parameters": fn.get("parameters") or {},
+                "description": (fn.get("description") or "").strip(),
             }
         )
     return json.dumps(
@@ -36,7 +35,58 @@ def list_available_tools(arguments: dict[str, Any]) -> str:
             "ok": True,
             "count": len(tools_out),
             "tools": tools_out,
-            "hint": "Use get_tool_help with a tool name for one schema in full, or call a tool with JSON args per parameters.properties / required.",
+            "hint": (
+                "Parameters omitted. For fewer tokens: list_tool_categories → list_tools_in_category(category) "
+                "→ get_tool_help(tool_name) for full JSON Schema, then invoke."
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def list_tool_categories(arguments: dict[str, Any]) -> str:
+    """Router categories: id, human label, short description, tool count (no tool schemas)."""
+    _ = arguments
+    reg = get_registry()
+    cats = reg.list_router_categories_catalog()
+    return json.dumps(
+        {
+            "ok": True,
+            "count": len(cats),
+            "categories": cats,
+            "hint": (
+                "Pick a category id, then call list_tools_in_category with that id for name + description only. "
+                "Call get_tool_help(tool_name) before invoking a tool."
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def list_tools_in_category(arguments: dict[str, Any]) -> str:
+    """Tools in one router category: name + description only (no parameters)."""
+    raw = arguments.get("category")
+    category = str(raw).strip().lower() if raw is not None else ""
+    if not category:
+        return json.dumps({"ok": False, "error": "category is required (id from list_tool_categories)"})
+    reg = get_registry()
+    rows = reg.list_router_category_tools_lite(category)
+    if not rows:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": f"unknown or empty category: {category!r}",
+                "hint": "Use list_tool_categories for valid ids.",
+            },
+            ensure_ascii=False,
+        )
+    return json.dumps(
+        {
+            "ok": True,
+            "category": category,
+            "count": len(rows),
+            "tools": rows,
+            "hint": "Call get_tool_help(tool_name) for the full parameter schema before invoking.",
         },
         ensure_ascii=False,
     )
@@ -73,9 +123,9 @@ def get_tool_help(arguments: dict[str, Any]) -> str:
             "ok": False,
             "error": f"unknown tool: {name}",
             "hint": (
-                "Use exact names from list_available_tools. "
+                "Use exact names from list_tools_in_category or list_available_tools. "
                 "There is no tool named openai_function or get_tool_result — "
-                "call the real tool (e.g. fishing_index) with tool_calls, or list_available_tools first."
+                "call the real tool (e.g. fishing_index) with tool_calls, or list first."
             ),
             "suggestions": suggestions,
         },
@@ -85,6 +135,8 @@ def get_tool_help(arguments: dict[str, Any]) -> str:
 
 HANDLERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "list_available_tools": list_available_tools,
+    "list_tool_categories": list_tool_categories,
+    "list_tools_in_category": list_tools_in_category,
     "get_tool_help": get_tool_help,
 }
 
@@ -94,10 +146,42 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "list_available_tools",
             "description": (
-                "Lists all tools this agent can run: name, short description, and JSON parameter schema. "
-                "Use when the user asks what you can do, which tools exist, or how to get started."
+                "Lists all tools: name and short description only (no parameter schemas). "
+                "Prefer list_tool_categories → list_tools_in_category when exploring by domain; "
+                "use get_tool_help(tool_name) for full schema before calling a tool."
             ),
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tool_categories",
+            "description": (
+                "Lists router tool categories: id, short label, description, and how many tools each has. "
+                "No per-tool schemas. Next step: list_tools_in_category(category=id)."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tools_in_category",
+            "description": (
+                "Lists tools in one category: each tool's name and short description only (no JSON parameter schema). "
+                "Use get_tool_help(tool_name) for the full schema of the tool you intend to call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Category id from list_tool_categories (e.g. gmail, tool_factory)",
+                    },
+                },
+                "required": ["category"],
+            },
         },
     },
     {
@@ -107,14 +191,14 @@ TOOLS: list[dict[str, Any]] = [
             "description": (
                 "Returns full help for one tool: description and parameter schema. "
                 "If the name is wrong, the response includes suggestions (e.g. openweather_retrieve → openweather_current). "
-                "Use when the user asks how to use a specific tool by name."
+                "Call this for exactly one tool before invoking it."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "tool_name": {
                         "type": "string",
-                        "description": "Exact tool name from list_available_tools",
+                        "description": "Exact tool name from list_tools_in_category or list_available_tools",
                     },
                 },
                 "required": ["tool_name"],

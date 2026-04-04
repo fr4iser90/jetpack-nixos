@@ -12,6 +12,8 @@ from app import secret_otp_bundle
 
 __version__ = "1.0.0"
 TOOL_ID = "secrets_help"
+AGENT_TOOL_ROUTER_CATEGORY = "secrets"
+AGENT_TOOL_ROUTER_TRIGGERS = ()
 
 
 def secrets_help(arguments: dict[str, Any]) -> str:

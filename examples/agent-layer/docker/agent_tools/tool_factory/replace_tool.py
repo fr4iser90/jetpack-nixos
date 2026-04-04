@@ -17,6 +17,8 @@ from agent_tools.tool_factory._tool_factory_common import (
 
 __version__ = "1.1.0"
 TOOL_ID = "replace_tool"
+AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
+AGENT_TOOL_ROUTER_TRIGGERS = ()
 
 
 def replace_tool(arguments: dict[str, Any]) -> str:

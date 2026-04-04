@@ -166,66 +166,12 @@ def _completion_to_sse_lines(completion: dict[str, Any]) -> bytes:
     return b"".join(lines)
 
 
-def _merge_agent_tool_mode_from_request(request: Request, body: dict[str, Any]) -> None:
-    """Header ``X-Agent-Mode`` / ``X-Agent-Tool-Mode`` overrides JSON ``agent_tool_mode`` / ``agent_mode``."""
-    hm = (request.headers.get("X-Agent-Mode") or request.headers.get("X-Agent-Tool-Mode") or "").strip()
-    if hm:
-        body["agent_tool_mode"] = hm
-    elif "agent_tool_mode" not in body and body.get("agent_mode"):
-        body["agent_tool_mode"] = body["agent_mode"]
-
-
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="invalid JSON body")
-
-    _merge_agent_tool_mode_from_request(request, body)
-
-    want_stream = bool(body.get("stream"))
-    work = dict(body)
-    work["stream"] = False
-
-    user_id, tenant_id = resolve_user_tenant(request)
-    id_token = identity.set_identity(tenant_id, user_id)
-
-    try:
-        result = await chat_completion(work)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.exception("chat completion failed")
-        raise HTTPException(status_code=502, detail=str(e))
-    finally:
-        identity.reset_identity(id_token)
-
-    if want_stream:
-        return StreamingResponse(
-            iter([_completion_to_sse_lines(result)]),
-            media_type="text/event-stream",
-        )
-
-    return result
-
-
-@app.post("/v1/chat/completions/tool-factory")
-async def chat_completions_tool_factory(request: Request):
-    """
-    Like ``/v1/chat/completions`` but **always** uses tool mode ``tool_factory`` (dynamic tools + optional help tools).
-
-    Optional JSON ``tool_prefetch``: ``{"openai_tool_name": "fishing_index"}`` or ``{"filename": "fishing_index.py"}`` —
-    the server runs ``read_tool`` once and prepends the source to the system prompt.
-
-    ``X-Agent-Mode`` does **not** override this endpoint; use the main completions URL if you need another mode.
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="invalid JSON body")
-
-    body["agent_tool_mode"] = "tool_factory"
 
     want_stream = bool(body.get("stream"))
     work = dict(body)

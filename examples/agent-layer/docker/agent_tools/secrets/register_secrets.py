@@ -10,6 +10,15 @@ from app import secret_otp_bundle
 
 __version__ = "1.0.0"
 TOOL_ID = "register_secrets"
+AGENT_TOOL_ROUTER_CATEGORY = "secrets"
+AGENT_TOOL_ROUTER_TRIGGERS = (
+    "secret",
+    "credential",
+    "api key",
+    "app password",
+    "otp",
+    "register_secret",
+)
 
 
 def register_secrets(arguments: dict[str, Any]) -> str:

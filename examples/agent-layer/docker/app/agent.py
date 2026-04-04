@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -14,32 +15,16 @@ import httpx
 from . import config
 from .registry import get_registry
 from .tool_routing import (
-    apply_weak_model_tool_strip,
-    classify_mode_by_keywords,
-    classify_mode_by_llm,
-    filter_tools_for_mode,
+    classify_user_tool_categories,
+    filter_merged_tools_by_categories,
     last_user_text,
-    normalize_mode,
-    should_narrow_after_tool_result,
 )
 from .tools import run_tool
 
 logger = logging.getLogger(__name__)
 
 
-def _chat_model_matches_weak_substrings(model_id: str | None) -> bool:
-    if not model_id:
-        return False
-    subs = config.AGENT_WEAK_TOOL_MODEL_SUBSTRINGS
-    if not subs:
-        return False
-    ml = str(model_id).lower()
-    return any(s in ml for s in subs)
-
-
-def _http_error_recovery_hint(
-    tool_name: str, result: str, *, chat_model: str | None = None
-) -> str | None:
+def _http_error_recovery_hint(tool_name: str, result: str) -> str | None:
     if not config.AGENT_TOOL_HTTP_ERROR_RECOVERY_HINTS:
         return None
     if len(result) > 8000:
@@ -64,17 +49,10 @@ def _http_error_recovery_hint(
     )
     if not any(m in rl for m in markers):
         return None
-    weak = _chat_model_matches_weak_substrings(chat_model)
-    if weak:
-        fix_strategy = (
-            "With this **small chat model**, prefer **`replace_tool`** with full `source` after you see the bug "
-            "(narrow `update_tool` patches are easy to get wrong). "
-        )
-    else:
-        fix_strategy = (
-            "For a **one-line API fix** (wrong query param, URL), **`update_tool`** is usually enough; "
-            "use **`replace_tool`** if you need a larger rewrite. "
-        )
+    fix_strategy = (
+        "For a **one-line API fix** (wrong query param, URL), **`update_tool`** is usually enough; "
+        "use **`replace_tool`** if you need a larger rewrite. "
+    )
     return (
         "The previous tool output suggests an HTTP/API failure. "
         "Do not blame the API key first: **400 Bad Request** often means **wrong query parameters** "
@@ -89,41 +67,8 @@ def _http_error_recovery_hint(
     )
 
 
-# Substrings for keyword router when env lists are empty (conservative on "workspace").
-_DEFAULT_ROUTER_TOOL_SUBSTRINGS = [
-    "create_tool",
-    "read_tool",
-    "update_tool",
-    "replace_tool",
-    "rename_tool",
-    "list_tools",
-    "/data/tools",
-    "extra_tools",
-    "tool_factory",
-    "openai_tool_name",
-    "dynamic tool",
-    "AGENT_TOOLS_EXTRA_DIR",
-    "fishing_index",
-]
-_DEFAULT_ROUTER_WORKSPACE_SUBSTRINGS = [
-    "workspace_read_file",
-    "workspace_write_file",
-    "workspace_replace_text",
-    "workspace_list_dir",
-    "workspace_stat",
-    "workspace_glob",
-    "workspace_search_text",
-    "AGENT_WORKSPACE_ROOT",
-    "gemounteten workspace",
-]
-
-_BODY_KEYS_STRIP_FROM_OLLAMA = frozenset(
-    {
-        "agent_tool_mode",
-        "agent_mode",
-        "tool_prefetch",
-    }
-)
+# Client-only keys: never forward to Ollama (not in OpenAI chat schema).
+_BODY_KEYS_STRIP_FROM_OLLAMA = frozenset({"tool_prefetch"})
 
 
 def _inject_system_prompt(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -183,6 +128,114 @@ def _merge_tools(body_tools: list[Any] | None) -> list[Any]:
         len(merged),
     )
     return merged
+
+
+_CATALOG_PARAM_HINT = (
+    "Full JSON parameter schema is not inlined here. Call get_tool_help with tool_name set to this "
+    "tool's name, then invoke with arguments matching that schema."
+)
+
+
+def _catalog_tool_function(name: str, fn: dict[str, Any]) -> dict[str, Any]:
+    """Small tools[] entry: label + description hint; minimal parameters (never full domain schemas)."""
+    desc = (fn.get("description") or "").strip()
+    if _CATALOG_PARAM_HINT not in desc:
+        desc = f"{desc}\n\n{_CATALOG_PARAM_HINT}".strip() if desc else _CATALOG_PARAM_HINT
+    if name == "get_tool_help":
+        params: dict[str, Any] = {
+            "type": "object",
+            "properties": {
+                "tool_name": {
+                    "type": "string",
+                    "description": "Exact tool name from list_tools_in_category or list_available_tools",
+                },
+            },
+            "required": ["tool_name"],
+        }
+    elif name == "list_tools_in_category":
+        params = {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Category id from list_tool_categories",
+                },
+            },
+            "required": ["category"],
+        }
+    else:
+        params = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        }
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": desc,
+            "parameters": params,
+        },
+    }
+
+
+def _tools_for_chat_request(
+    merged_tools: list[Any],
+    *,
+    full_tool_names: frozenset[str] | None = None,
+) -> list[Any]:
+    """
+    Build tools[] for chat/completions.
+
+    Default: every tool is catalog-only (name + description + tiny parameters). Domain tools never ship
+    full JSON Schema unless their name is in ``full_tool_names`` (router category hit).
+    """
+    full = full_tool_names if full_tool_names else frozenset()
+    out: list[Any] = []
+    for spec in merged_tools:
+        if not isinstance(spec, dict):
+            out.append(spec)
+            continue
+        name = _tool_spec_name(spec)
+        fn = spec.get("function")
+        if not name or not isinstance(fn, dict):
+            out.append(spec)
+            continue
+        if name in full:
+            out.append(copy.deepcopy(spec))
+            continue
+        out.append(_catalog_tool_function(name, fn))
+    return out
+
+
+def _tools_payload_size_estimate(tools: list[Any]) -> tuple[int, int, int]:
+    """
+    (json_char_count, est_tokens_low, est_tokens_high) for the tools[] array as sent in the request.
+
+    Heuristic only: chars/4 .. chars/3 — not the model tokenizer; real usage depends on the backend.
+    """
+    if not tools:
+        return 0, 0, 0
+    raw = json.dumps(tools, ensure_ascii=False, separators=(",", ":"))
+    c = len(raw)
+    lo = (c + 3) // 4
+    hi = (c + 2) // 3
+    return c, lo, hi
+
+
+def _log_tools_request_estimate(label: str, tools: list[Any]) -> None:
+    if not config.AGENT_LOG_TOOLS_REQUEST_ESTIMATE:
+        return
+    n = len(tools)
+    jc, lo, hi = _tools_payload_size_estimate(tools)
+    logger.info(
+        "tools request %s: tool_defs=%d json_chars=%d est_tokens~%d-%d (heuristic, not tokenizer)",
+        label,
+        n,
+        jc,
+        lo,
+        hi,
+    )
 
 
 def _parse_tool_arguments(raw: str | None) -> dict[str, Any]:
@@ -400,51 +453,6 @@ def _synthetic_tool_calls_from_message(
     return None
 
 
-def _router_tool_substrings() -> list[str]:
-    raw = config.AGENT_TOOL_ROUTER_KEYWORDS_TOOL_FACTORY
-    if raw:
-        return [x.strip() for x in raw.split(",") if x.strip()]
-    return list(_DEFAULT_ROUTER_TOOL_SUBSTRINGS)
-
-
-def _router_workspace_substrings() -> list[str]:
-    raw = config.AGENT_TOOL_ROUTER_KEYWORDS_WORKSPACE
-    if raw:
-        return [x.strip() for x in raw.split(",") if x.strip()]
-    return list(_DEFAULT_ROUTER_WORKSPACE_SUBSTRINGS)
-
-
-async def _resolve_tool_mode(body: dict[str, Any], *, chat_model: str) -> str:
-    raw = (body.get("agent_tool_mode") or body.get("agent_mode") or "").strip()
-    if raw:
-        return normalize_mode(raw)
-
-    messages = list(body.get("messages") or [])
-    ut = last_user_text(messages)
-    if config.AGENT_TOOL_ROUTER_KEYWORDS_ENABLED and ut:
-        kw = classify_mode_by_keywords(
-            ut,
-            tool_substrings=_router_tool_substrings(),
-            workspace_substrings=_router_workspace_substrings(),
-        )
-        if kw:
-            logger.info("tool router (keywords): mode=%s", kw)
-            return kw
-
-    if config.AGENT_TOOL_ROUTER_LLM_ENABLED and ut:
-        rm = (config.AGENT_TOOL_ROUTER_MODEL or "").strip() or chat_model
-        m = await classify_mode_by_llm(
-            user_text=ut,
-            model=rm,
-            ollama_base=config.OLLAMA_BASE_URL,
-        )
-        if m:
-            logger.info("tool router (LLM): mode=%s", m)
-            return m
-
-    return normalize_mode(config.AGENT_TOOL_MODE)
-
-
 def _apply_tool_prefetch(messages: list[dict[str, Any]], prefetch: dict[str, Any]) -> None:
     args = {
         k: prefetch[k]
@@ -482,51 +490,8 @@ def _apply_tool_prefetch(messages: list[dict[str, Any]], prefetch: dict[str, Any
         messages.insert(0, {"role": "system", "content": block})
 
 
-def _inject_tool_factory_tool_hint(messages: list[dict[str, Any]]) -> None:
-    """Steer small models away from inventing JSON keys like replace_source instead of real tool_calls."""
-    hint = (
-        "[tool_factory] After read_tool you must call a real tool from the schema (OpenAI tool_calls), "
-        "not arbitrary JSON in the reply text. "
-        "Prefer replace_tool: openai_tool_name or filename plus source (complete valid Python module). "
-        "update_tool may be unavailable for small chat models — use replace_tool for full rewrites. "
-        "Patch-style edits need exact old_string snippets. "
-        "No parameter or tool named replace_source."
-    )
-    if not messages:
-        messages.append({"role": "system", "content": hint})
-        return
-    if messages[0].get("role") == "system":
-        prev = messages[0].get("content") or ""
-        messages[0] = {
-            **messages[0],
-            "content": (hint + "\n\n" + prev).strip() if prev else hint,
-        }
-    else:
-        messages.insert(0, {"role": "system", "content": hint})
-
-
 def _names_from_tool_list(tools: list[Any]) -> set[str]:
     return {n for t in tools if (n := _tool_spec_name(t))}
-
-
-def _tools_for_round(
-    merged_tools: list[Any],
-    active_mode: str,
-    model: Any,
-) -> list[Any]:
-    tfr = filter_tools_for_mode(
-        merged_tools,
-        active_mode,
-        tool_factory_includes_help=config.AGENT_TOOL_MODE_TOOL_FACTORY_INCLUDES_HELP,
-    )
-    if normalize_mode(active_mode) == "tool_factory":
-        tfr = apply_weak_model_tool_strip(
-            tfr,
-            str(model) if model is not None else "",
-            substrings=config.AGENT_WEAK_TOOL_MODEL_SUBSTRINGS,
-            exclude_names=config.AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS,
-        )
-    return tfr
 
 
 def _approx_text_chars_in_messages(messages: list[dict[str, Any]]) -> int:
@@ -621,6 +586,9 @@ def _log_ollama_round(
 
 async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
     # stream flag is ignored here; Ollama always gets stream=false. Caller may wrap JSON as SSE.
+    body.pop("agent_tool_mode", None)
+    body.pop("agent_mode", None)
+
     model = body.get("model")
     if not model:
         raise ValueError("missing model")
@@ -630,23 +598,35 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
     if isinstance(pf, dict):
         _apply_tool_prefetch(messages, pf)
 
-    tool_mode = await _resolve_tool_mode(body, chat_model=str(model))
-    if tool_mode == "tool_factory":
-        _inject_tool_factory_tool_hint(messages)
-
     merged_tools = _merge_tools(body.get("tools"))
-    tools = _tools_for_round(merged_tools, tool_mode, model)
-    narrow_mode: str | None = None
+    routed_category: str | None = None
+    cats = classify_user_tool_categories(last_user_text(messages))
+    if cats:
+        merged_tools = filter_merged_tools_by_categories(merged_tools, cats)
+        routed_category = (
+            next(iter(cats)) if len(cats) == 1 else "+".join(sorted(cats))
+        )
 
-    if tools:
-        names = [n for t in tools if (n := _tool_spec_name(t))]
+    # Full JSON schemas in the request only when exactly one category matched (saves tokens on multi-intent).
+    if len(cats) == 1:
+        sole = next(iter(cats))
+        full_for_request = get_registry().router_tool_names_for_category(sole)
+    else:
+        full_for_request = frozenset()
+    tools_for_request = _tools_for_chat_request(
+        merged_tools, full_tool_names=full_for_request
+    )
+
+    if tools_for_request:
+        names = [n for t in tools_for_request if (n := _tool_spec_name(t))]
         logger.info(
-            "forwarding %d tools to Ollama (mode=%s, model=%s): %s",
+            "forwarding %d tools in chat request (model=%s, category=%s): %s",
             len(names),
-            tool_mode,
             model,
+            routed_category or "full",
             names,
         )
+    _log_tools_request_estimate("chat_completions", tools_for_request)
     options = {
         k: v
         for k, v in body.items()
@@ -658,8 +638,7 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
 
     async with httpx.AsyncClient(timeout=600.0) as client:
         for round_i in range(config.MAX_TOOL_ROUNDS):
-            active_mode = narrow_mode if narrow_mode else tool_mode
-            tools_for_round = _tools_for_round(merged_tools, active_mode, model)
+            tools_for_round = list(tools_for_request)
             allowed_names = _names_from_tool_list(tools_for_round)
 
             payload: dict[str, Any] = {
@@ -723,28 +702,6 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
                 tool_call_id = tc.get("id") or ""
                 logger.info("tool round %s: %s(%s)", round_i + 1, name, args)
                 result = run_tool(name, args)
-                if (
-                    config.AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY
-                    and narrow_mode is None
-                    and should_narrow_after_tool_result(name, result)
-                ):
-                    narrow_mode = "tool_factory"
-                    logger.info(
-                        "tool routing: narrowed remaining rounds to tool_factory "
-                        "(workspace tool failed; use read_tool/update_tool/replace_tool for /data/tools)"
-                    )
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "Workspace tools are not available in this deployment. "
-                                "For Python modules under the extra tool directory, use read_tool, "
-                                "update_tool, replace_tool, or create_tool — not workspace_*. "
-                                "Call replace_tool with source (full file) or update_tool with old_string/new_string; "
-                                "do not reply with invented JSON like replace_source."
-                            ),
-                        }
-                    )
                 messages.append(
                     {
                         "role": "tool",
@@ -752,7 +709,7 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
                         "content": result,
                     }
                 )
-                recovery = _http_error_recovery_hint(name, result, chat_model=str(model))
+                recovery = _http_error_recovery_hint(name, result)
                 if recovery:
                     messages.append({"role": "system", "content": recovery})
 

@@ -15,6 +15,18 @@ from app import identity
 
 __version__ = "1.0.1"
 TOOL_ID = "gmail"
+AGENT_TOOL_ROUTER_CATEGORY = "gmail"
+AGENT_TOOL_ROUTER_TRIGGERS = (
+    "gmail",
+    "imap",
+    "inbox",
+    "e-mail",
+    "email",
+    "mailbox",
+    "app password",
+)
+AGENT_TOOL_ROUTER_CATEGORY_LABEL = "Gmail"
+AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION = "E-Mail lesen und suchen (IMAP, User-Secret gmail)."
 
 # Stored via register_secrets / POST user/secrets — this tool reads it server-side only.
 SECRET_SERVICE_KEY = "gmail"

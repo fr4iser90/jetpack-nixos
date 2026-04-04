@@ -9,6 +9,8 @@ from app import db
 
 __version__ = "1.0.0"
 TOOL_ID = "kb"
+AGENT_TOOL_ROUTER_CATEGORY = "kb"
+AGENT_TOOL_ROUTER_TRIGGERS = ("knowledge base", "second brain", "my notes", "notebook")
 
 
 def kb_append_note(arguments: dict[str, Any]) -> str:

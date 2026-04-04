@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 __version__ = "1.2.0"
 TOOL_ID = "calendar_ics"
+AGENT_TOOL_ROUTER_CATEGORY = "calendar"
+AGENT_TOOL_ROUTER_TRIGGERS = (
+    "calendar",
+    "ical",
+    "ics",
+    "schedule",
+    "appointment",
+)
 
 # Try Google-specific key first (same JSON shape), then generic ICS.
 SECRET_KEYS_TRY_ORDER: tuple[str, ...] = ("google_calendar", "calendar_ics")

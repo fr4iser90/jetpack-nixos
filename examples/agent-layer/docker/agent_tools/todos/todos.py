@@ -9,6 +9,8 @@ from app import db
 
 __version__ = "1.1.1"
 TOOL_ID = "todos"
+AGENT_TOOL_ROUTER_CATEGORY = "todos"
+AGENT_TOOL_ROUTER_TRIGGERS = ("todo", "task", "reminder")
 
 
 def create_todo(arguments: dict[str, Any]) -> str:

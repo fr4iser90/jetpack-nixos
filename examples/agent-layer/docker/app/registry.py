@@ -17,6 +17,19 @@ from . import db
 
 logger = logging.getLogger(__name__)
 
+
+class _RouterAccum:
+    """Mutable state while scanning modules for ``AGENT_TOOL_ROUTER_*`` metadata."""
+
+    __slots__ = ("cat_description", "cat_label", "order", "tools", "triggers")
+
+    def __init__(self) -> None:
+        self.tools: dict[str, set[str]] = {}
+        self.triggers: dict[str, set[str]] = {}
+        self.order: list[str] = []
+        self.cat_label: dict[str, str] = {}
+        self.cat_description: dict[str, str] = {}
+
 Handler = Callable[[dict[str, Any]], str]
 
 
@@ -72,6 +85,11 @@ class ToolRegistry:
         self._handlers: dict[str, Handler] = {}
         self._openai_tools: list[dict[str, Any]] = []
         self._tools_meta: list[dict[str, Any]] = []
+        self._router_cat_tools: dict[str, frozenset[str]] = {}
+        self._router_cat_triggers: dict[str, frozenset[str]] = {}
+        self._router_cat_order: list[str] = []
+        self._router_cat_label: dict[str, str] = {}
+        self._router_cat_description: dict[str, str] = {}
 
     def load_all(self) -> None:
         with self._lock:
@@ -80,6 +98,7 @@ class ToolRegistry:
             acc_h: dict[str, Handler] = {}
             acc_tools: list[dict[str, Any]] = []
             acc_meta: list[dict[str, Any]] = []
+            router = _RouterAccum()
 
             allow = config.tools_allowed_sha256()
             extra_raw = (config.TOOLS_EXTRA_DIR or "").strip()
@@ -141,16 +160,27 @@ class ToolRegistry:
                         tools=acc_tools,
                         meta=acc_meta,
                         file_sha256=digest,
+                        router=router,
                     )
 
             self._handlers = acc_h
             self._openai_tools = acc_tools
             self._tools_meta = acc_meta
+            self._router_cat_tools = {k: frozenset(v) for k, v in router.tools.items()}
+            self._router_cat_triggers = {k: frozenset(v) for k, v in router.triggers.items()}
+            self._router_cat_order = list(router.order)
+            self._router_cat_label = dict(router.cat_label)
+            self._router_cat_description = dict(router.cat_description)
 
     def _clear_storage(self) -> None:
         self._handlers.clear()
         self._openai_tools.clear()
         self._tools_meta.clear()
+        self._router_cat_tools = {}
+        self._router_cat_triggers = {}
+        self._router_cat_order = []
+        self._router_cat_label = {}
+        self._router_cat_description = {}
 
     def _purge_dynamic_tool_modules(self) -> None:
         for key in list(sys.modules):
@@ -166,6 +196,7 @@ class ToolRegistry:
         meta: list[dict[str, Any]],
         *,
         file_sha256: str | None = None,
+        router: _RouterAccum | None = None,
     ) -> None:
         mod_tools = getattr(mod, "TOOLS", None)
         mod_handlers = getattr(mod, "HANDLERS", None)
@@ -241,6 +272,132 @@ class ToolRegistry:
         logger.info(
             "loaded tool %s v%s (%d tools) [%s]", pid, ver, len(tool_names), source
         )
+
+        if router is not None and tool_names:
+            rcat = getattr(mod, "AGENT_TOOL_ROUTER_CATEGORY", None)
+            if isinstance(rcat, str) and rcat.strip():
+                key = rcat.strip().lower()
+                if key not in router.order:
+                    router.order.append(key)
+                router.tools.setdefault(key, set()).update(tool_names)
+                if key not in router.cat_label:
+                    lab = getattr(mod, "AGENT_TOOL_ROUTER_CATEGORY_LABEL", None)
+                    if isinstance(lab, str) and lab.strip():
+                        router.cat_label[key] = lab.strip()
+                if key not in router.cat_description:
+                    cdesc = getattr(mod, "AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION", None)
+                    if isinstance(cdesc, str) and cdesc.strip():
+                        router.cat_description[key] = cdesc.strip()
+                if "AGENT_TOOL_ROUTER_TRIGGERS" in mod.__dict__:
+                    tr = mod.AGENT_TOOL_ROUTER_TRIGGERS
+                    parts: list[str] = []
+                    if isinstance(tr, str):
+                        parts = [
+                            x.strip().lower()
+                            for x in tr.replace(";", ",").split(",")
+                            if x.strip()
+                        ]
+                    elif isinstance(tr, (list, tuple, frozenset, set)):
+                        parts = [str(x).strip().lower() for x in tr if str(x).strip()]
+                    if parts:
+                        router.triggers.setdefault(key, set()).update(parts)
+                else:
+                    tid = str(pid).strip().lower()
+                    if tid:
+                        router.triggers.setdefault(key, set()).add(tid)
+
+    def router_tool_names_for_category(self, category: str) -> frozenset[str]:
+        with self._lock:
+            return self._router_cat_tools.get(category.strip().lower(), frozenset())
+
+    def _router_category_order(self) -> list[str]:
+        """Call with ``self._lock`` held."""
+        known = frozenset(self._router_cat_tools.keys())
+        order: list[str] = []
+        seen: set[str] = set()
+        for c in config.AGENT_TOOL_ROUTER_CATEGORY_ORDER:
+            if c in known and c not in seen:
+                order.append(c)
+                seen.add(c)
+        for c in self._router_cat_order:
+            if c in known and c not in seen:
+                order.append(c)
+                seen.add(c)
+        return order
+
+    def list_router_categories_catalog(self) -> list[dict[str, Any]]:
+        """Category ids with optional label/description from modules; tool counts only (no schemas)."""
+        with self._lock:
+            order = self._router_category_order()
+            out: list[dict[str, Any]] = []
+            for cid in order:
+                tools = self._router_cat_tools.get(cid)
+                if not tools:
+                    continue
+                label = self._router_cat_label.get(cid) or cid
+                desc = self._router_cat_description.get(cid) or ""
+                out.append(
+                    {
+                        "id": cid,
+                        "label": label,
+                        "description": desc,
+                        "tool_count": len(tools),
+                    }
+                )
+            return out
+
+    def list_router_category_tools_lite(self, category: str) -> list[dict[str, str]]:
+        """OpenAI tool names + descriptions for one router category; no parameter schemas."""
+        c = category.strip().lower()
+        with self._lock:
+            names = self._router_cat_tools.get(c)
+            if not names:
+                return []
+            name_set = set(names)
+            rows: list[dict[str, str]] = []
+            for spec in self._openai_tools:
+                fn = spec.get("function") if isinstance(spec, dict) else None
+                if not isinstance(fn, dict):
+                    continue
+                n = fn.get("name")
+                if not n or n not in name_set:
+                    continue
+                rows.append(
+                    {
+                        "name": str(n),
+                        "description": (fn.get("description") or "").strip(),
+                    }
+                )
+        rows.sort(key=lambda r: r["name"])
+        return rows
+
+    def classify_tool_router_categories(self, user_text: str) -> frozenset[str]:
+        """Every category whose trigger set matches ``user_text`` (substring, lowercased)."""
+        if not (user_text or "").strip():
+            return frozenset()
+        tl = user_text.lower()
+        with self._lock:
+            order = self._router_category_order()
+            triggers_map = self._router_cat_triggers
+        matched: set[str] = set()
+        for cat in order:
+            for sub in triggers_map.get(cat, frozenset()):
+                if sub and sub in tl:
+                    matched.add(cat)
+                    break
+        return frozenset(matched)
+
+    def classify_tool_router_category(self, user_text: str) -> str | None:
+        """First matching category in router order (legacy single-winner)."""
+        cats = self.classify_tool_router_categories(user_text)
+        if not cats:
+            return None
+        with self._lock:
+            order = self._router_category_order()
+        for c in order:
+            if c in cats:
+                return c
+        return next(iter(cats))
 
     @property
     def openai_tools(self) -> list[dict[str, Any]]:

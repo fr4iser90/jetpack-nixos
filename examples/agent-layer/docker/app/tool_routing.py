@@ -1,40 +1,22 @@
-"""Tool subsetting by mode (tool_factory / workspace / default_chat / full) + optional router + retry narrowing."""
+"""Tool list shaping: category filter from registry metadata (``AGENT_TOOL_ROUTER_*`` on modules)."""
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Any
 
-from . import config
+from .registry import get_registry
 
 logger = logging.getLogger(__name__)
 
-# Built-in dynamic-tool tools (file under AGENT_TOOLS_EXTRA_DIR).
-TOOL_FACTORY_CORE: frozenset[str] = frozenset(
+TOOL_INTROSPECTION: frozenset[str] = frozenset(
     {
-        "create_tool",
-        "list_tools",
-        "read_tool",
-        "update_tool",
-        "replace_tool",
-        "rename_tool",
+        "list_available_tools",
+        "get_tool_help",
+        "list_tool_categories",
+        "list_tools_in_category",
     }
 )
-
-TOOL_INTROSPECTION: frozenset[str] = frozenset({"list_available_tools", "get_tool_help"})
-
-VALID_MODES = frozenset({"full", "tool_factory", "workspace", "default_chat", "default"})
-
-
-def normalize_mode(raw: str | None) -> str:
-    s = (raw or "").strip().lower()
-    if s == "default":
-        return "default_chat"
-    if s in VALID_MODES and s != "default":
-        return s
-    return "full"
 
 
 def _tool_name(entry: Any) -> str | None:
@@ -45,102 +27,6 @@ def _tool_name(entry: Any) -> str | None:
         n = fn.get("name")
         return str(n) if n else None
     return None
-
-
-def _filter_tools_subset_by_mode(
-    tools: list[Any],
-    mode: str,
-    *,
-    tool_factory_includes_help: bool,
-) -> list[Any]:
-    """
-    Original mode-based “smart” filtering (subset of tools per ``agent_tool_mode``).
-
-    - ``full``: all tools
-    - ``tool_factory``: ``TOOL_FACTORY_CORE`` plus optional ``TOOL_INTROSPECTION``
-    - ``workspace``: only names starting with ``workspace_``
-    - ``default_chat``: all except factory core and ``workspace_*``
-    """
-    m = normalize_mode(mode)
-    if m == "full" or not tools:
-        return list(tools)
-
-    out: list[Any] = []
-    for spec in tools:
-        name = _tool_name(spec)
-        if not name:
-            out.append(spec)
-            continue
-        if m == "tool_factory":
-            allow = set(TOOL_FACTORY_CORE)
-            if tool_factory_includes_help:
-                allow |= TOOL_INTROSPECTION
-            if name in allow:
-                out.append(spec)
-        elif m == "workspace":
-            if name.startswith("workspace_"):
-                out.append(spec)
-        elif m == "default_chat":
-            if name not in TOOL_FACTORY_CORE and not name.startswith("workspace_"):
-                out.append(spec)
-        else:
-            out.append(spec)
-    return out
-
-
-def filter_tools_for_mode(
-    tools: list[Any],
-    mode: str,
-    *,
-    tool_factory_includes_help: bool,
-) -> list[Any]:
-    """Forward either all tools or a mode subset (see ``AGENT_TOOL_SUBSET_BY_MODE``).
-
-    Default (``AGENT_TOOL_SUBSET_BY_MODE=false``): return the full merged tool list.
-
-    When subsetting is on, logic lives in ``_filter_tools_subset_by_mode`` (tool_factory /
-    workspace / default_chat). Weak-model stripping in ``agent.py`` is independent.
-    """
-    if config.AGENT_TOOL_SUBSET_BY_MODE:
-        return _filter_tools_subset_by_mode(
-            tools, mode, tool_factory_includes_help=tool_factory_includes_help
-        )
-    _ = (mode, tool_factory_includes_help)
-    return list(tools)
-
-
-def apply_weak_model_tool_strip(
-    tools: list[Any],
-    model: str | None,
-    *,
-    substrings: list[str],
-    exclude_names: frozenset[str],
-) -> list[Any]:
-    """
-    Remove tool specs whose OpenAI ``name`` is in ``exclude_names`` when ``model`` matches a weak substring.
-
-    Used in ``tool_factory`` mode so tiny models are nudged toward ``replace_tool`` / ``create_tool``.
-    """
-    if not tools or not model or not substrings or not exclude_names:
-        return list(tools)
-    ml = str(model).lower()
-    if not any(s in ml for s in substrings):
-        return list(tools)
-    out: list[Any] = []
-    dropped: list[str] = []
-    for spec in tools:
-        name = _tool_name(spec)
-        if name and name in exclude_names:
-            dropped.append(name)
-            continue
-        out.append(spec)
-    if dropped:
-        logger.info(
-            "weak-model tool strip (model id matches %s): removed %s",
-            substrings,
-            dropped,
-        )
-    return out
 
 
 def last_user_text(messages: list[dict[str, Any]]) -> str:
@@ -160,118 +46,40 @@ def last_user_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
-def classify_mode_by_keywords(
-    text: str,
-    *,
-    tool_substrings: list[str],
-    workspace_substrings: list[str],
-) -> str | None:
-    if not text.strip():
-        return None
-    tl = text.lower()
-    p_hit = any(s.strip() and s.strip().lower() in tl for s in tool_substrings if s.strip())
-    w_hit = any(s.strip() and s.strip().lower() in tl for s in workspace_substrings if s.strip())
-    if p_hit and w_hit:
-        return None
-    if p_hit:
-        return "tool_factory"
-    if w_hit:
-        return "workspace"
-    return None
+def classify_user_tool_category(text: str) -> str | None:
+    """First matching category in router order (legacy). Prefer ``classify_user_tool_categories``."""
+    return get_registry().classify_tool_router_category(text)
 
 
-def _extract_json_mode(text: str) -> str | None:
-    t = text.strip()
-    if "```" in t:
-        parts = t.split("```")
-        for i in range(1, len(parts), 2):
-            block = parts[i].strip()
-            if block.lower().startswith("json"):
-                block = block[4:].lstrip()
-            try:
-                o = json.loads(block)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(o, dict) and isinstance(o.get("mode"), str):
-                return normalize_mode(o["mode"])
-    try:
-        o = json.loads(t)
-        if isinstance(o, dict) and isinstance(o.get("mode"), str):
-            return normalize_mode(o["mode"])
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r'"mode"\s*:\s*"([^"]+)"', t)
-    if m:
-        return normalize_mode(m.group(1))
-    return None
+def classify_user_tool_categories(text: str) -> frozenset[str]:
+    """All categories whose triggers match ``text`` (union filter + multi-intent)."""
+    return get_registry().classify_tool_router_categories(text)
 
 
-async def classify_mode_by_llm(
-    *,
-    user_text: str,
-    model: str,
-    ollama_base: str,
-) -> str | None:
-    """Single classification call; returns a valid mode or None."""
-    if not user_text.strip():
-        return None
-    import httpx
-
-    system = (
-        "You are a router. Reply with ONE JSON object only, no markdown, no prose. "
-        'Schema: {"mode":"<one of: full, tool_factory, workspace, default_chat>"}.\n'
-        "tool_factory: user edits/creates Python agent tools under the extra tool directory "
-        "(create_tool, read_tool, update_tool, replace_tool, dynamic tools).\n"
-        "workspace: user edits files in the mounted workspace (workspace_* tools only).\n"
-        "default_chat: normal chat, todos, web, email, github, kb — no tool file authoring, no workspace files.\n"
-        "full: unclear or needs everything.\n"
-    )
-    user = f"Classify this user message:\n{user_text[:6000]}"
-    url = f"{ollama_base.rstrip('/')}/v1/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "stream": False,
-        "temperature": 0,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
-            r.raise_for_status()
-            data = r.json()
-    except Exception as e:
-        logger.warning("tool router LLM failed: %s", e)
-        return None
-    choice0 = (data.get("choices") or [{}])[0]
-    msg = choice0.get("message") or {}
-    content = msg.get("content")
-    if not isinstance(content, str):
-        return None
-    mode = _extract_json_mode(content)
-    if mode in ("tool_factory", "workspace", "default_chat", "full"):
-        return mode
-    return None
+def filter_merged_tools_by_category(tools: list[Any], category: str) -> list[Any]:
+    """Keep tools registered under this category plus introspection tools."""
+    return filter_merged_tools_by_categories(tools, frozenset({category.strip().lower()}))
 
 
-def workspace_error_suggests_tool_path(result: str) -> bool:
-    """True if a workspace_* tool failed because workspace is not configured."""
-    s = (result or "").lower()
-    needles = (
-        "local workspace tools are disabled",
-        "agent_workspace_root",
-        "workspace root",
-        "workspace isn't set up",
-        "workspace is not configured",
-        "disabled until agent_workspace_root",
-    )
-    return any(n in s for n in needles)
-
-
-def should_narrow_after_tool_result(tool_name: str, result: str) -> bool:
-    return bool(
-        tool_name.startswith("workspace_")
-        and workspace_error_suggests_tool_path(result)
-    )
+def filter_merged_tools_by_categories(
+    tools: list[Any], categories: frozenset[str]
+) -> list[Any]:
+    """Keep tools in any of ``categories`` plus introspection (list/get help, category browse)."""
+    if not categories:
+        return list(tools)
+    reg = get_registry()
+    allow = set(TOOL_INTROSPECTION)
+    for c in categories:
+        allow |= set(reg.router_tool_names_for_category(c))
+    if len(allow) <= len(TOOL_INTROSPECTION):
+        logger.warning("unknown or empty router categories %r; not filtering", categories)
+        return list(tools)
+    out: list[Any] = []
+    for spec in tools:
+        n = _tool_name(spec)
+        if not n:
+            out.append(spec)
+            continue
+        if n in allow:
+            out.append(spec)
+    return out

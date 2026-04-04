@@ -17,6 +17,14 @@ import httpx
 
 __version__ = "1.2.0"
 TOOL_ID = "openweather"
+AGENT_TOOL_ROUTER_CATEGORY = "openweather"
+AGENT_TOOL_ROUTER_TRIGGERS = (
+    "openweather",
+    "weather",
+    "forecast",
+    "temperature",
+    "openweathermap",
+)
 
 _OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather"
 _FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast"

@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 
 __version__ = "1.0.0"
 TOOL_ID = "clock"
+AGENT_TOOL_ROUTER_CATEGORY = "clocks"
+AGENT_TOOL_ROUTER_TRIGGERS = ("timezone", "utc", "what time", "clock", "zoneinfo")
 
 
 def get_current_time(arguments: dict[str, Any]) -> str:

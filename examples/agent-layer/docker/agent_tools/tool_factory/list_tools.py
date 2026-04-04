@@ -9,6 +9,8 @@ from agent_tools.tool_factory._tool_factory_common import extra_root_or_error
 
 __version__ = "1.0.0"
 TOOL_ID = "list_tools"
+AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
+AGENT_TOOL_ROUTER_TRIGGERS = ()
 
 
 def list_tools(arguments: dict[str, Any]) -> str:

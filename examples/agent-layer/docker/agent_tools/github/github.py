@@ -15,6 +15,15 @@ from app import identity
 
 __version__ = "1.0.0"
 TOOL_ID = "github"
+AGENT_TOOL_ROUTER_CATEGORY = "github"
+AGENT_TOOL_ROUTER_TRIGGERS = (
+    "github",
+    "repository",
+    "repo",
+    "pull request",
+    "issue",
+    "gist",
+)
 
 GITHUB_API = "https://api.github.com"
 USER_SECRET_KEY = "github_pat"

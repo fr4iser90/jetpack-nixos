@@ -13,15 +13,6 @@ def tools_backup_directory() -> Path:
     return Path(DATA_DIR) / "tool_backups"
 
 
-def normalize_tool_mode(raw: str | None) -> str:
-    s = (raw or "").strip().lower()
-    if s == "default":
-        return "default_chat"
-    if s in ("full", "tool_factory", "workspace", "default_chat"):
-        return s
-    return "full"
-
-
 def _env_bool(key: str, default: bool) -> bool:
     v = os.environ.get(key, "").strip().lower()
     if not v:
@@ -52,56 +43,22 @@ CONTENT_TOOL_FALLBACK = _env_bool("AGENT_CONTENT_TOOL_FALLBACK", True)
 AGENT_LOG_LLM_ROUNDS = _env_bool("AGENT_LOG_LLM_ROUNDS", True)
 AGENT_LOG_ASSISTANT_PREVIEW_CHARS = _env_int("AGENT_LOG_ASSISTANT_PREVIEW_CHARS", 0)
 AGENT_LOG_LARGE_CONTEXT_CHARS = _env_int("AGENT_LOG_LARGE_CONTEXT_CHARS", 120_000)
+# Log serialized tools[] size + rough token bounds before chat/completions.
+AGENT_LOG_TOOLS_REQUEST_ESTIMATE = _env_bool("AGENT_LOG_TOOLS_REQUEST_ESTIMATE", True)
 
-# --- Tool routing (subset by mode; header X-Agent-Mode overrides) ---
-# full | tool_factory | workspace | default_chat (alias: default)
-AGENT_TOOL_MODE = normalize_tool_mode(os.environ.get("AGENT_TOOL_MODE", "full"))
-
-AGENT_TOOL_MODE_TOOL_FACTORY_INCLUDES_HELP = _env_bool(
-    "AGENT_TOOL_MODE_TOOL_FACTORY_INCLUDES_HELP", True
-)
-# When true: ``filter_tools_for_mode`` applies tool_factory / workspace / default_chat subsets (see ``tool_routing._filter_tools_subset_by_mode``). Default off = all tools to the LLM.
-AGENT_TOOL_SUBSET_BY_MODE = _env_bool("AGENT_TOOL_SUBSET_BY_MODE", False)
-# If no X-Agent-Mode / JSON agent_tool_mode: keyword substring match on last user message
-AGENT_TOOL_ROUTER_KEYWORDS_ENABLED = _env_bool("AGENT_TOOL_ROUTER_KEYWORDS_ENABLED", True)
-# Comma-separated case-insensitive substrings (empty = use built-in defaults in agent)
-AGENT_TOOL_ROUTER_KEYWORDS_TOOL_FACTORY = os.environ.get(
-    "AGENT_TOOL_ROUTER_KEYWORDS_TOOL_FACTORY", ""
-).strip()
-AGENT_TOOL_ROUTER_KEYWORDS_WORKSPACE = os.environ.get(
-    "AGENT_TOOL_ROUTER_KEYWORDS_WORKSPACE", ""
-).strip()
-# Optional second stage: one short Ollama call when keywords are inconclusive
-AGENT_TOOL_ROUTER_LLM_ENABLED = _env_bool("AGENT_TOOL_ROUTER_LLM_ENABLED", False)
-AGENT_TOOL_ROUTER_MODEL = (os.environ.get("AGENT_TOOL_ROUTER_MODEL") or "").strip()
-# After workspace_* fails with "disabled", narrow remaining rounds to tool_factory tools
-AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY = _env_bool(
-    "AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY", True
-)
+# --- Tool list sent to Ollama (merged registry tools; no per-request "agent tool mode") ---
 # After a tool returns text that looks like an HTTP client/API error, inject a short system hint
 # so the model can read_tool / search_web / replace_tool without the user (see TOOLS.md).
 AGENT_TOOL_HTTP_ERROR_RECOVERY_HINTS = _env_bool(
     "AGENT_TOOL_HTTP_ERROR_RECOVERY_HINTS", True
 )
-
-# In tool_factory mode: if chat ``model`` id contains any substring (case-insensitive), drop listed tools.
-# Small models fail at exact old_string patches; replace_tool / create_tool work better.
-def _weak_tool_model_substrings() -> list[str]:
-    raw = (os.environ.get("AGENT_WEAK_TOOL_MODEL_SUBSTRINGS") or "nemotron,nano").strip()
-    if not raw:
-        return []
-    return [s.strip().lower() for s in raw.split(",") if s.strip()]
-
-
-def _weak_tool_model_exclude_names() -> frozenset[str]:
-    raw = (os.environ.get("AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS") or "update_tool").strip()
-    if not raw:
-        return frozenset()
-    return frozenset(x.strip() for x in raw.split(",") if x.strip())
-
-
-AGENT_WEAK_TOOL_MODEL_SUBSTRINGS = _weak_tool_model_substrings()
-AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS = _weak_tool_model_exclude_names()
+# Last user message → restrict tools[] to matching category (+ list_available_tools / get_tool_help); no match = full list.
+# Optional: comma-separated category ids first when classifying. See AGENT_TOOL_ROUTER_* on tool modules.
+AGENT_TOOL_ROUTER_CATEGORY_ORDER = tuple(
+    x.strip().lower()
+    for x in (os.environ.get("AGENT_TOOL_ROUTER_CATEGORY_ORDER") or "").split(",")
+    if x.strip()
+)
 
 
 def _resolve_database_url() -> str:

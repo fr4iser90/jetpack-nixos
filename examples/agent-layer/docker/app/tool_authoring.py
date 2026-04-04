@@ -190,6 +190,13 @@ def validate_registry_tool_exports(mod: Any) -> str | None:
     """
     tools = getattr(mod, "TOOLS", None)
     handlers = getattr(mod, "HANDLERS", None)
+    if isinstance(tools, dict):
+        return (
+            "TOOLS must be a **list** of OpenAI specs "
+            '[{"type":"function","function":{"name":"my_tool","description":"...","parameters":{...}}}, ...], '
+            "not a dict. Use HANDLERS = {\"my_tool\": callable} for name → function. "
+            "See docker/extra_tools/sample_echo.py or call get_tool_help(\"create_tool\")."
+        )
     if not isinstance(tools, list) or not tools:
         return "TOOLS must be a non-empty list"
     if not isinstance(handlers, dict) or not handlers:

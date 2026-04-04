@@ -17,6 +17,8 @@ from agent_tools.tool_factory._tool_factory_common import (
 
 __version__ = "1.2.0"
 TOOL_ID = "update_tool"
+AGENT_TOOL_ROUTER_CATEGORY = "tool_factory"
+AGENT_TOOL_ROUTER_TRIGGERS = ()
 
 
 def update_tool(arguments: dict[str, Any]) -> str:

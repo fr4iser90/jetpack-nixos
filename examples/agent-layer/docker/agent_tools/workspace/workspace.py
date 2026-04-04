@@ -17,6 +17,13 @@ from app import config
 
 __version__ = "1.0.0"
 TOOL_ID = "workspace"
+AGENT_TOOL_ROUTER_CATEGORY = "workspace"
+AGENT_TOOL_ROUTER_TRIGGERS = (
+    "workspace",
+    "local file",
+    "mounted directory",
+    "agent_workspace",
+)
 
 MAX_FILE_BYTES = config.WORKSPACE_MAX_FILE_BYTES
 MAX_LIST_ENTRIES = config.WORKSPACE_MAX_LIST_ENTRIES
