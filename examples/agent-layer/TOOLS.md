@@ -17,7 +17,8 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten T
 | [x] | `set_todo_status` | `todos` | Status nur für eigene Zeilen. |
 | [x] | `search_web` | `web_search` | Tavily → Brave → **ddgs**-Metasuche ohne API-Key (inoffiziell). |
 | [x] | `deep_search` | `web_search` | Tavily: `raw_content`. Ohne: Snippets + **Seitenabruf** wenn `robots.txt` den UA erlaubt (`fetch_status`, `raw_content`). Abschalten: `AGENT_DISABLE_FETCH_DEEP=true`. |
-| [x] | `openweather_current` | `openweather` | Aktuelles Wetter (OpenWeather `/weather`, metrisch); Key nur **`OPENWEATHER_API_KEY`** in der Agent-Umgebung. |
+| [x] | `openweather_current` | `openweather` | Aktuelles Wetter (OpenWeather **`/data/2.5/weather`**, metrisch); Key nur **`OPENWEATHER_API_KEY`**. |
+| [x] | `openweather_forecast` | `openweather` | 5-Tage-Vorschau in **3-Stunden-Schritten** (**`/data/2.5/forecast`**). Für „bestes Fenster“ / Heuristiken; kein offizieller Beißindex in der API. |
 | [x] | `list_available_tools` | `tool_help` | Alle Tools mit Beschreibung + JSON-Schema (Parameter). |
 | [x] | `get_tool_help` | `tool_help` | Hilfe zu einem Tool nach Namen (`tool_name`). |
 | [x] | `register_secrets` | `register_secrets` | Secret registrieren: Einmalcode + fertiger `curl` (OTP-Flow); nur in `register_secrets.py`. |
@@ -66,6 +67,7 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten T
 - **Aktivierung:** `AGENT_CREATE_TOOL_ENABLED=true` — wenn **`AGENT_TOOLS_EXTRA_DIR`** nicht gesetzt ist, verwendet der Agent **`/data/tools`** (Compose-Volume z. B. **`./extra_tools:/data/tools:rw`**). Anderen Pfad nur bei Bedarf setzen. Optional **`AGENT_CREATE_TOOL_MAX_BYTES`** (Default siehe `config.py`).
 - **Allowlist:** Ist **`AGENT_TOOLS_ALLOWED_SHA256`** gesetzt und der neue Digest **nicht** darin, liefert das Tool `reload: pending` + **`sha256`** — Betreiber ergänzt die Whitelist und ruft **`POST /v1/admin/reload-tools`** (oder Neustart).
 - **Aufbau des Quelltexts:** Wie `docker/extra_tools/sample_echo.py`: Modul mit **`TOOLS`** (OpenAI-Function-Liste), **`HANDLERS`** (Name → Callable), Handler-Funktionen mit `def foo(arguments: dict) -> str` und `return json.dumps(...)`. Jedes Element von **`TOOLS`** muss **`{\"type\": \"function\", \"function\": {\"name\": \"…\", \"description\": \"…\", \"parameters\": {...}}}`** sein — der **`name`** gehört **unter** `function`, nicht auf die oberste Ebene des Dicts (häufiger Codegen-Fehler; vor dem Schreiben prüft der Agent `validate_tool_registry_exports`). AST-Check verbietet u. a. `subprocess`, `eval`/`exec`, `os.system` — **kein vollständiger Sandbox**; nur in vertrauenswürdigen Umgebungen aktivieren (**`AGENT_API_KEY`** empfohlen).
+- **Anderes Tool aus einem Extra-Plugin aufrufen:** `from app.plugin_invoke import invoke_registered_tool` — Argumente: **OpenAI-Funktionsname** (z. B. `openweather_forecast`) und ein **dict** wie im Chat. Rückgabe ist derselbe JSON-String wie bei einem normalen Tool-Call; bei Fehlern oft `{"ok": false, ...}`. Jeder Aufruf wird wie üblich in **`tool_invocations`** protokolliert. Tiefe begrenzt: **`AGENT_TOOL_CHAIN_MAX_DEPTH`** (Default 24). Rekursion (A ruft A) vermeiden. Alternative bleibt `from app.tools import run_tool` (identische Semantik).
 
 **Validiert (manuell / Stack):** Tool-Loop über Agent → Ollama, Einträge in `todos` + `tool_invocations`; Open WebUI mit OpenAI-Base-URL auf den Agent; `stream: true` über SSE-Shim; Tool-Merge mit WebUI-`tools`; Content-JSON-Fallback für Modelle mit `reasoning`-Feld.
 
@@ -117,6 +119,13 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten T
 - **Aktivierung:** In `docker/.env` **`AGENT_WORKSPACE_ROOT=/workspace`** (oder anderer Pfad) setzen und in `compose.yaml` ein **Volume** eintragen, z. B. `- /pfad/auf/host:/workspace:rw`. Ohne gültiges Verzeichnis liefern alle `workspace_*`-Calls eine klare Fehlermeldung (`ok: false`).
 - **Sicherheit:** Nur Pfade **unter** dem aufgelösten Root (kein `..`, kein führendes `/` in `path`). Symlinks werden beim Auflösen berücksichtigt — Mount nur vertrauenswürdige Daten. Schreib-Tools können Dateien **zerstören**; Betreiber-Scope wie Shell-Zugriff.
 - **Limits:** u. a. `AGENT_WORKSPACE_MAX_FILE_BYTES`, `AGENT_WORKSPACE_MAX_READ_LINES`, `AGENT_WORKSPACE_SEARCH_MAX_FILE_BYTES` (Suche überspringt größere Dateien), `AGENT_WORKSPACE_MAX_SEARCH_*` / `AGENT_WORKSPACE_MAX_GLOB_FILES` — siehe `docker/.env.example` und `app/config.py`.
+
+### OpenWeather (`tool openweather`)
+
+- **Nicht veraltet:** Das eingebaute Tool nutzt die üblichen **Free-/Subscription-Endpunkte** **`/data/2.5/weather`** und **`/data/2.5/forecast`**. Das sind **nicht** dasselbe wie das frühere „One Call 2.5“-Produkt oder **One Call 3.0** — letztere brauchen oft gesonderte Freischaltung und andere URLs.
+- **Env:** nur **`OPENWEATHER_API_KEY`** im Agent-Container (`.env` + Compose). Keine **`OW3_API_KEY`** und keine Keys im Chat.
+- **Beißindex / Angeln:** OpenWeather liefert **kein** Feld „bite index“ oder Mondphase in diesen APIs. Vorgehen für das Modell: **`openweather_forecast`** mit `location` aufrufen → aus `forecast[]` (z. B. `temp_c`, `humidity_pct`, `wind_speed_m_s`, `pop`) eine **einfache, erklärte** Formel im Chat anwenden — oder **`openweather_current`** nur für „jetzt“. **Kein** `create_tool`, das `/onecall` oder erfundene JSON-Felder nutzt, es sei denn du hast das Produkt aktiv und weißt die exakte Doku.
+- **Kleine Modelle (Nemotron-nano & Co.):** Tool-Factory-Codegen für HTTP + Zeitreihen ist fehleranfällig; lieber **diese beiden Built-ins** nutzen und die Auswertung im Text machen.
 
 ### Kalender ICS (`tool calendar_ics`)
 
