@@ -1,26 +1,21 @@
 """
-Default shipped tool tree: one **domain folder** per concern, each containing ``*.py`` modules
-(``TOOLS`` + ``HANDLERS``). The registry scans **recursively** (see ``registry._iter_tool_py_files``).
+Shipped tool tree: **recursive** scan for ``*.py`` (``TOOLS`` + ``HANDLERS``); see ``app.registry``.
 
-Layout (examples)::
+**Layout (2-level sweet spot)** — first directory under ``agent_tools/`` is the **layer** (stored as
+``tools_meta[].layer`` for operators / future filtering). Go deeper only when it helps (e.g. many
+modules under ``domains/fishing/``).
 
-    clocks/clock.py
-    github/github.py
-    gmail/gmail.py
-    calendar/calendar_ics.py
-    kb/kb.py
-    todos/todos.py
-    web_search/web_search.py
-    openweather/openweather.py
-    workspace/workspace.py
-    secrets/register_secrets.py, secrets/secrets_help.py
-    tool_help/tool_help.py
-    tool_factory/create_tool.py
-    tool_factory/list_tools.py
-    tool_factory/read_tool.py
-    tool_factory/update_tool.py
-    tool_factory/replace_tool.py
-    tool_factory/rename_tool.py
+- ``core/`` — introspection, secrets, workspace, **tool_factory** (dynamic plugins).
+- ``knowledge/`` — KB, RAG, long-term notes / vectors.
+- ``external/`` — network APIs (GitHub, web search, weather, …).
+- ``productivity/`` — mail, calendar, todos, clocks.
+- ``domains/`` — **your** verticals (fishing, survival, games, …); keep technical vs domain split.
 
-Extra tools under ``AGENT_TOOLS_EXTRA_DIR`` may use the same nested layout.
+**Scaling (100+ / 1000+ tools):** Folders alone are not enough. Use (1) **router categories**
+(``TOOL_DOMAIN`` + ``TOOL_TRIGGERS`` per module), (2) **staged discovery** (``list_tool_categories`` →
+``list_tools_in_category`` → ``get_tool_help``), (3) optional **``TOOL_TAGS``** on a module
+(reflected in ``tools_meta``), (4) later: embedding search over tool TOOL_DESCRIPTIONs or capability
+indexes — not implemented in the HTTP core yet.
+
+Extra tools under ``AGENT_TOOLS_EXTRA_DIR`` may mirror the same shape (e.g. ``extra_tools/domains/...``).
 """

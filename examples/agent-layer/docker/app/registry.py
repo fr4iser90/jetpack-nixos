@@ -17,18 +17,21 @@ from . import db
 
 logger = logging.getLogger(__name__)
 
+# First path segment under each tool scan root → ``tools_meta[].layer`` (optional).
+KNOWN_TOOL_LAYERS = frozenset({"core", "knowledge", "external", "productivity", "domains"})
+
 
 class _RouterAccum:
-    """Mutable state while scanning modules for ``AGENT_TOOL_ROUTER_*`` metadata."""
+    """Mutable state while scanning modules for router metadata (``TOOL_DOMAIN``, triggers, …)."""
 
-    __slots__ = ("cat_description", "cat_label", "order", "tools", "triggers")
+    __slots__ = ("cat_TOOL_DESCRIPTION", "cat_TOOL_LABEL", "order", "tools", "TOOL_TRIGGERS")
 
     def __init__(self) -> None:
         self.tools: dict[str, set[str]] = {}
-        self.triggers: dict[str, set[str]] = {}
+        self.TOOL_TRIGGERS: dict[str, set[str]] = {}
         self.order: list[str] = []
-        self.cat_label: dict[str, str] = {}
-        self.cat_description: dict[str, str] = {}
+        self.cat_TOOL_LABEL: dict[str, str] = {}
+        self.cat_TOOL_DESCRIPTION: dict[str, str] = {}
 
 Handler = Callable[[dict[str, Any]], str]
 
@@ -76,10 +79,10 @@ class ToolRegistry:
         self._chat_tool_specs: list[dict[str, Any]] = []
         self._tools_meta: list[dict[str, Any]] = []
         self._router_cat_tools: dict[str, frozenset[str]] = {}
-        self._router_cat_triggers: dict[str, frozenset[str]] = {}
+        self._router_cat_TOOL_TRIGGERS: dict[str, frozenset[str]] = {}
         self._router_cat_order: list[str] = []
-        self._router_cat_label: dict[str, str] = {}
-        self._router_cat_description: dict[str, str] = {}
+        self._router_cat_TOOL_LABEL: dict[str, str] = {}
+        self._router_cat_TOOL_DESCRIPTION: dict[str, str] = {}
 
     def load_all(self) -> None:
         with self._lock:
@@ -108,6 +111,15 @@ class ToolRegistry:
                     logger.warning("skip missing tool directory: %s", directory)
                     continue
                 for path in _iter_tool_py_files(directory):
+                    try:
+                        rel_to_root = path.resolve().relative_to(directory.resolve())
+                    except (ValueError, OSError):
+                        rel_to_root = Path(path.name)
+                    layer_from_path: str | None = None
+                    if rel_to_root.parts:
+                        cand = rel_to_root.parts[0].lower()
+                        if cand in KNOWN_TOOL_LAYERS:
+                            layer_from_path = cand
                     try:
                         data = path.read_bytes()
                     except OSError:
@@ -151,26 +163,27 @@ class ToolRegistry:
                         meta=acc_meta,
                         file_sha256=digest,
                         router=router,
+                        tool_layer=layer_from_path,
                     )
 
             self._handlers = acc_h
             self._chat_tool_specs = acc_tools
             self._tools_meta = acc_meta
             self._router_cat_tools = {k: frozenset(v) for k, v in router.tools.items()}
-            self._router_cat_triggers = {k: frozenset(v) for k, v in router.triggers.items()}
+            self._router_cat_TOOL_TRIGGERS = {k: frozenset(v) for k, v in router.TOOL_TRIGGERS.items()}
             self._router_cat_order = list(router.order)
-            self._router_cat_label = dict(router.cat_label)
-            self._router_cat_description = dict(router.cat_description)
+            self._router_cat_TOOL_LABEL = dict(router.cat_TOOL_LABEL)
+            self._router_cat_TOOL_DESCRIPTION = dict(router.cat_TOOL_DESCRIPTION)
 
     def _clear_storage(self) -> None:
         self._handlers.clear()
         self._chat_tool_specs.clear()
         self._tools_meta.clear()
         self._router_cat_tools = {}
-        self._router_cat_triggers = {}
+        self._router_cat_TOOL_TRIGGERS = {}
         self._router_cat_order = []
-        self._router_cat_label = {}
-        self._router_cat_description = {}
+        self._router_cat_TOOL_LABEL = {}
+        self._router_cat_TOOL_DESCRIPTION = {}
 
     def _purge_dynamic_tool_modules(self) -> None:
         for key in list(sys.modules):
@@ -187,6 +200,7 @@ class ToolRegistry:
         *,
         file_sha256: str | None = None,
         router: _RouterAccum | None = None,
+        tool_layer: str | None = None,
     ) -> None:
         mod_tools = getattr(mod, "TOOLS", None)
         mod_handlers = getattr(mod, "HANDLERS", None)
@@ -258,28 +272,71 @@ class ToolRegistry:
         }
         if file_sha256 is not None:
             entry["sha256"] = file_sha256
+        if tool_layer is not None:
+            entry["layer"] = tool_layer
+        tags = getattr(mod, "TOOL_TAGS", None)
+        if isinstance(tags, (list, tuple, frozenset, set)):
+            tl = [str(x).strip() for x in tags if str(x).strip()]
+            if tl:
+                entry["tags"] = tl
+        elif isinstance(tags, str) and tags.strip():
+            entry["tags"] = [
+                x.strip() for x in tags.replace(";", ",").split(",") if x.strip()
+            ]
+        dom = getattr(mod, "TOOL_DOMAIN", None)
+        if isinstance(dom, str) and dom.strip():
+            entry["domain"] = dom.strip().lower()
+        req = getattr(mod, "TOOL_REQUIRES", None)
+        if isinstance(req, (list, tuple, frozenset, set)):
+            rl = [str(x).strip() for x in req if str(x).strip()]
+            if rl:
+                entry["requires"] = rl
+        ptm = getattr(mod, "AGENT_TOOL_META_BY_NAME", None)
+        if isinstance(ptm, dict) and ptm:
+            per: dict[str, Any] = {}
+            for k, v in ptm.items():
+                if not isinstance(v, dict):
+                    continue
+                nk = str(k).strip()
+                if not nk:
+                    continue
+                row: dict[str, Any] = {}
+                r2 = v.get("requires")
+                if isinstance(r2, (list, tuple)):
+                    lr = [str(x).strip() for x in r2 if str(x).strip()]
+                    if lr:
+                        row["requires"] = lr
+                t2 = v.get("tags")
+                if isinstance(t2, (list, tuple)):
+                    lt = [str(x).strip() for x in t2 if str(x).strip()]
+                    if lt:
+                        row["tags"] = lt
+                if row:
+                    per[nk] = row
+            if per:
+                entry["per_tool"] = per
         meta.append(entry)
         logger.info(
             "loaded tool %s v%s (%d tools) [%s]", pid, ver, len(tool_names), source
         )
 
         if router is not None and tool_names:
-            rcat = getattr(mod, "AGENT_TOOL_ROUTER_CATEGORY", None)
+            rcat = getattr(mod, "TOOL_DOMAIN", None)
             if isinstance(rcat, str) and rcat.strip():
                 key = rcat.strip().lower()
                 if key not in router.order:
                     router.order.append(key)
                 router.tools.setdefault(key, set()).update(tool_names)
-                if key not in router.cat_label:
-                    lab = getattr(mod, "AGENT_TOOL_ROUTER_CATEGORY_LABEL", None)
+                if key not in router.cat_TOOL_LABEL:
+                    lab = getattr(mod, "TOOL_LABEL", None)
                     if isinstance(lab, str) and lab.strip():
-                        router.cat_label[key] = lab.strip()
-                if key not in router.cat_description:
-                    cdesc = getattr(mod, "AGENT_TOOL_ROUTER_CATEGORY_DESCRIPTION", None)
+                        router.cat_TOOL_LABEL[key] = lab.strip()
+                if key not in router.cat_TOOL_DESCRIPTION:
+                    cdesc = getattr(mod, "TOOL_DESCRIPTION", None)
                     if isinstance(cdesc, str) and cdesc.strip():
-                        router.cat_description[key] = cdesc.strip()
-                if "AGENT_TOOL_ROUTER_TRIGGERS" in mod.__dict__:
-                    tr = mod.AGENT_TOOL_ROUTER_TRIGGERS
+                        router.cat_TOOL_DESCRIPTION[key] = cdesc.strip()
+                if "TOOL_TRIGGERS" in mod.__dict__:
+                    tr = mod.TOOL_TRIGGERS
                     parts: list[str] = []
                     if isinstance(tr, str):
                         parts = [
@@ -290,11 +347,11 @@ class ToolRegistry:
                     elif isinstance(tr, (list, tuple, frozenset, set)):
                         parts = [str(x).strip().lower() for x in tr if str(x).strip()]
                     if parts:
-                        router.triggers.setdefault(key, set()).update(parts)
+                        router.TOOL_TRIGGERS.setdefault(key, set()).update(parts)
                 else:
                     tid = str(pid).strip().lower()
                     if tid:
-                        router.triggers.setdefault(key, set()).add(tid)
+                        router.TOOL_TRIGGERS.setdefault(key, set()).add(tid)
 
     def router_tool_names_for_category(self, category: str) -> frozenset[str]:
         with self._lock:
@@ -305,7 +362,7 @@ class ToolRegistry:
         known = frozenset(self._router_cat_tools.keys())
         order: list[str] = []
         seen: set[str] = set()
-        for c in config.AGENT_TOOL_ROUTER_CATEGORY_ORDER:
+        for c in config.AGENT_TOOL_DOMAIN_ORDER:
             if c in known and c not in seen:
                 order.append(c)
                 seen.add(c)
@@ -316,7 +373,7 @@ class ToolRegistry:
         return order
 
     def list_router_categories_catalog(self) -> list[dict[str, Any]]:
-        """Category ids with optional label/description from modules; tool counts only (no schemas)."""
+        """Category ids with optional TOOL_LABEL/TOOL_DESCRIPTION from modules; tool counts only (no schemas)."""
         with self._lock:
             order = self._router_category_order()
             out: list[dict[str, Any]] = []
@@ -324,20 +381,20 @@ class ToolRegistry:
                 tools = self._router_cat_tools.get(cid)
                 if not tools:
                     continue
-                label = self._router_cat_label.get(cid) or cid
-                desc = self._router_cat_description.get(cid) or ""
+                TOOL_LABEL = self._router_cat_TOOL_LABEL.get(cid) or cid
+                desc = self._router_cat_TOOL_DESCRIPTION.get(cid) or ""
                 out.append(
                     {
                         "id": cid,
-                        "label": label,
-                        "description": desc,
+                        "TOOL_LABEL": TOOL_LABEL,
+                        "TOOL_DESCRIPTION": desc,
                         "tool_count": len(tools),
                     }
                 )
             return out
 
     def list_router_category_tools_lite(self, category: str) -> list[dict[str, str]]:
-        """Registered tool function names + descriptions for one router category; no parameter schemas."""
+        """Registered tool function names + TOOL_DESCRIPTIONs for one router category; no parameter schemas."""
         c = category.strip().lower()
         with self._lock:
             names = self._router_cat_tools.get(c)
@@ -355,7 +412,7 @@ class ToolRegistry:
                 rows.append(
                     {
                         "name": str(n),
-                        "description": (fn.get("description") or "").strip(),
+                        "TOOL_DESCRIPTION": (fn.get("TOOL_DESCRIPTION") or "").strip(),
                     }
                 )
         rows.sort(key=lambda r: r["name"])
@@ -368,10 +425,10 @@ class ToolRegistry:
         tl = user_text.lower()
         with self._lock:
             order = self._router_category_order()
-            triggers_map = self._router_cat_triggers
+            TOOL_TRIGGERS_map = self._router_cat_TOOL_TRIGGERS
         matched: set[str] = set()
         for cat in order:
-            for sub in triggers_map.get(cat, frozenset()):
+            for sub in TOOL_TRIGGERS_map.get(cat, frozenset()):
                 if sub and sub in tl:
                     matched.add(cat)
                     break

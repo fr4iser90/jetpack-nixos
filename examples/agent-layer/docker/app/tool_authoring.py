@@ -185,7 +185,7 @@ def validate_tool_source(source: str) -> str | None:
 def validate_registry_tool_exports(mod: Any) -> str | None:
     """
     Match the expectations of ``ToolRegistry._register_module``: each ``TOOLS`` entry must be
-    ``{\"type\": \"function\", \"function\": {\"name\": ..., \"description\": ..., \"parameters\": dict}}``.
+    ``{\"type\": \"function\", \"function\": {\"name\": ..., \"TOOL_DESCRIPTION\": ..., \"parameters\": dict}}``.
     Models often wrongly put ``name`` at the top level of the tool dict — that is rejected here.
     """
     tools = getattr(mod, "TOOLS", None)
@@ -193,7 +193,7 @@ def validate_registry_tool_exports(mod: Any) -> str | None:
     if isinstance(tools, dict):
         return (
             "TOOLS must be a **list** of Chat Completions tool entries "
-            '[{"type":"function","function":{"name":"my_tool","description":"...","parameters":{...}}}, ...], '
+            '[{"type":"function","function":{"name":"my_tool","TOOL_DESCRIPTION":"...","parameters":{...}}}, ...], '
             "not a dict. Use HANDLERS = {\"my_tool\": callable} for name → function. "
             "See docker/extra_tools/sample_echo.py or call get_tool_help(\"create_tool\")."
         )
@@ -212,7 +212,7 @@ def validate_registry_tool_exports(mod: Any) -> str | None:
         if not isinstance(fn, dict):
             return (
                 f"TOOLS[{i}] must nest the function object under key \"function\" (Chat tools[] shape): "
-                '{{"type": "function", "function": {{"name": "...", "description": "...", '
+                '{{"type": "function", "function": {{"name": "...", "TOOL_DESCRIPTION": "...", '
                 '"parameters": {{...}}}}}} — not name at the top level of TOOLS[{i}].'
             )
         name = fn.get("name")

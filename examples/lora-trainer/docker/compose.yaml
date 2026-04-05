@@ -1,0 +1,45 @@
+# LoRA / fine-tune workspace (separate from agent-layer inference).
+#
+# Start from repo: ./start.sh   (uses examples/lib/start-docker-example.sh)
+# Or: cd docker && docker compose up -d
+#
+# Mounts: ../data (read-only input), ../outputs (checkpoints/logs).
+# GPU: requires NVIDIA Container Toolkit on the host; without it, use profile "cpu".
+#
+# Jetson / ARM: this CPU-oriented image is mainly for layout; use L4T images or native Nix for real GPU training.
+services:
+  # Default image (CPU PyTorch). ./start.sh runs plain `docker compose up -d`.
+  lora-trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: jetpack-lora-trainer:local
+    container_name: lora-trainer
+    working_dir: /work
+    volumes:
+      - ../data:/data:ro
+      - ../outputs:/outputs:rw
+    # Override to run a script, e.g. command: ["python", "/work/scripts/train.py"]
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+
+  lora-trainer-gpu:
+    profiles: ["gpu"]
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    image: jetpack-lora-trainer-gpu:local
+    container_name: lora-trainer-gpu
+    working_dir: /work
+    volumes:
+      - ../data:/data:ro
+      - ../outputs:/outputs:rw
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

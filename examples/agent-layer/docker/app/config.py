@@ -52,13 +52,17 @@ AGENT_LOG_TOOLS_REQUEST_ESTIMATE = _env_bool("AGENT_LOG_TOOLS_REQUEST_ESTIMATE",
 AGENT_TOOL_HTTP_ERROR_RECOVERY_HINTS = _env_bool(
     "AGENT_TOOL_HTTP_ERROR_RECOVERY_HINTS", True
 )
-# Last user message → restrict tools[] to matching category (+ list_available_tools / get_tool_help); no match = full list.
-# Optional: comma-separated category ids first when classifying. See AGENT_TOOL_ROUTER_* on tool modules.
-AGENT_TOOL_ROUTER_CATEGORY_ORDER = tuple(
+# Last user message → restrict tools[] to matching category (+ introspection tools).
+# Optional: comma-separated TOOL_DOMAIN ids first when classifying (same ids as router categories).
+AGENT_TOOL_DOMAIN_ORDER = tuple(
     x.strip().lower()
-    for x in (os.environ.get("AGENT_TOOL_ROUTER_CATEGORY_ORDER") or "").split(",")
+    for x in (os.environ.get("AGENT_TOOL_DOMAIN_ORDER") or "").split(",")
     if x.strip()
 )
+# If true: no router match (and no header/body categories) → only minimal introspection tools in tools[].
+# Unknown category ids from header/body → same minimal set instead of the full merged list.
+# Set false for legacy behavior (no match / unknown → all merged tools). Recommended true for small local models.
+AGENT_ROUTER_STRICT_DEFAULT = _env_bool("AGENT_ROUTER_STRICT_DEFAULT", False)
 # Remove these registered tool function names from tools[] after routing (comma-separated). Introspection tools are not exempt.
 AGENT_TOOLS_DENYLIST = frozenset(
     x.strip()
@@ -189,6 +193,18 @@ CREATE_TOOL_CODEGEN_ALLOW_NETWORK = _env_bool("AGENT_CREATE_TOOL_CODEGEN_ALLOW_N
 CREATE_TOOL_CODEGEN_MAX_ATTEMPTS = max(
     1, min(_env_int("AGENT_CREATE_TOOL_CODEGEN_MAX_ATTEMPTS", 1), 20)
 )
+
+# --- RAG (Postgres + pgvector, Ollama embeddings) ---
+AGENT_RAG_ENABLED = _env_bool("AGENT_RAG_ENABLED", True)
+# Ollama embedding model (pull separately: e.g. ollama pull nomic-embed-text). Must match DB column width.
+AGENT_RAG_OLLAMA_MODEL = (
+    os.environ.get("AGENT_RAG_OLLAMA_MODEL") or "nomic-embed-text"
+).strip()
+AGENT_RAG_EMBEDDING_DIM = max(32, min(_env_int("AGENT_RAG_EMBEDDING_DIM", 768), 4096))
+AGENT_RAG_CHUNK_SIZE = max(200, min(_env_int("AGENT_RAG_CHUNK_SIZE", 1200), 8000))
+AGENT_RAG_CHUNK_OVERLAP = max(0, min(_env_int("AGENT_RAG_CHUNK_OVERLAP", 200), 2000))
+AGENT_RAG_TOP_K = max(1, min(_env_int("AGENT_RAG_TOP_K", 8), 50))
+AGENT_RAG_EMBED_TIMEOUT = max(5, min(_env_int("AGENT_RAG_EMBED_TIMEOUT", 120), 600))
 
 
 def tool_log_redact_keys() -> frozenset[str]:

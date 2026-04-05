@@ -22,6 +22,7 @@ from . import identity
 from .agent import chat_completion
 from .http_identity import resolve_user_tenant
 from .tools_api import router as tools_router
+from .rag_api import router as rag_router
 from .registry import get_registry
 from .user_secrets_api import router as user_secrets_router
 
@@ -38,9 +39,10 @@ async def lifespan(_app: FastAPI):
     db.close_pool()
 
 
-app = FastAPI(title="agent-layer", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="agent-layer", version="0.7.0", lifespan=lifespan)
 app.include_router(user_secrets_router)
 app.include_router(tools_router)
+app.include_router(rag_router)
 
 _control_dir = Path(__file__).resolve().parent.parent / "control-panel"
 if _control_dir.is_dir():
@@ -206,9 +208,14 @@ async def chat_completions(request: Request):
     id_token = identity.set_identity(tenant_id, user_id)
 
     router_hdr = (request.headers.get("X-Agent-Router-Categories") or "").strip() or None
+    tool_dom_hdr = (request.headers.get("X-Agent-Tool-Domain") or "").strip() or None
 
     try:
-        result = await chat_completion(work, router_categories_header=router_hdr)
+        result = await chat_completion(
+            work,
+            router_categories_header=router_hdr,
+            tool_domain_header=tool_dom_hdr,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

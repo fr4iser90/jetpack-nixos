@@ -1,0 +1,16 @@
+# x86_64 NVIDIA CUDA 12.1 + PyTorch (wheel). Not for Jetson ARM — use L4T or native Nix there.
+FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
+
+WORKDIR /work
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY scripts/ /work/scripts/
+
+CMD ["python", "-c", "print('lora-trainer-gpu: exec and run scripts/train_example.py')"]

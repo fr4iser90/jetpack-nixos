@@ -37,7 +37,7 @@
       margin-bottom: 1rem;
     }
     section h2 { font-size: 1rem; margin: 0 0 0.75rem; color: var(--accent); }
-    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.2rem; }
+    TOOL_LABEL { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.2rem; }
     input[type="text"], input[type="password"], textarea {
       width: 100%;
       padding: 0.45rem 0.55rem;
@@ -90,11 +90,11 @@
     <h2>Verbindung</h2>
     <div class="row">
       <div>
-        <label for="baseUrl">Basis-URL (leer = diese Origin)</label>
+        <TOOL_LABEL for="baseUrl">Basis-URL (leer = diese Origin)</TOOL_LABEL>
         <input type="text" id="baseUrl" placeholder="http://127.0.0.1:8088" autocomplete="off" />
       </div>
       <div>
-        <label for="apiKey">AGENT_API_KEY (optional)</label>
+        <TOOL_LABEL for="apiKey">AGENT_API_KEY (optional)</TOOL_LABEL>
         <input type="password" id="apiKey" placeholder="Bearer-Token" autocomplete="off" />
       </div>
     </div>
@@ -141,20 +141,20 @@
   <section>
     <h2>Tool factory (<span class="mono">create_tool</span>)</h2>
     <p class="hint" style="margin-top:-0.25rem;">
-      Codegen: <span class="mono">tool_name</span> oder <span class="mono">filename</span> + <span class="mono">description</span> — <span class="mono">source</span> leer lassen.
+      Codegen: <span class="mono">tool_name</span> oder <span class="mono">filename</span> + <span class="mono">TOOL_DESCRIPTION</span> — <span class="mono">source</span> leer lassen.
       Paste: vollständiges Python-Modul in <span class="mono">source</span> + <span class="mono">filename</span>.
     </p>
-    <label for="ctToolName">tool_name (Codegen-Hinweis, z. B. fishingIndex)</label>
+    <TOOL_LABEL for="ctToolName">tool_name (Codegen-Hinweis, z. B. fishingIndex)</TOOL_LABEL>
     <input type="text" id="ctToolName" autocomplete="off" />
-    <label for="ctFilename">filename (z. B. my_tool.py)</label>
+    <TOOL_LABEL for="ctFilename">filename (z. B. my_tool.py)</TOOL_LABEL>
     <input type="text" id="ctFilename" placeholder="optional.py" autocomplete="off" />
-    <label for="ctDescription">description</label>
-    <textarea id="ctDescription" rows="3" placeholder="Domain-Hinweise für Codegen…"></textarea>
-    <label for="ctSource">source (volles Modul; leer = Codegen)</label>
+    <TOOL_LABEL for="ctTOOL_DESCRIPTION">TOOL_DESCRIPTION</TOOL_LABEL>
+    <textarea id="ctTOOL_DESCRIPTION" rows="3" placeholder="Domain-Hinweise für Codegen…"></textarea>
+    <TOOL_LABEL for="ctSource">source (volles Modul; leer = Codegen)</TOOL_LABEL>
     <textarea id="ctSource" rows="8" placeholder="# leer lassen für Ollama-Codegen"></textarea>
-    <label for="ctTestArgs">test_arguments (JSON-Objekt)</label>
+    <TOOL_LABEL for="ctTestArgs">test_arguments (JSON-Objekt)</TOOL_LABEL>
     <textarea id="ctTestArgs" rows="2" placeholder='{}'></textarea>
-    <label class="check"><input type="checkbox" id="ctOverwrite" /> overwrite (bestehende Datei ersetzen)</label>
+    <TOOL_LABEL class="check"><input type="checkbox" id="ctOverwrite" /> overwrite (bestehende Datei ersetzen)</TOOL_LABEL>
     <button type="button" id="btnCreateTool">POST /v1/admin/create-tool</button>
     <pre id="createResult" class="mono" style="margin-top:0.75rem; display:none; max-height:320px; overflow:auto;"></pre>
   </section>
@@ -246,8 +246,8 @@
         var fn = spec.function || {};
         var tr = document.createElement("tr");
         var name = (fn.name != null ? String(fn.name) : "—");
-        var desc = (fn.description != null ? String(fn.description) : "").slice(0, 200);
-        if (fn.description && String(fn.description).length > 200) desc += "…";
+        var desc = (fn.TOOL_DESCRIPTION != null ? String(fn.TOOL_DESCRIPTION) : "").slice(0, 200);
+        if (fn.TOOL_DESCRIPTION && String(fn.TOOL_DESCRIPTION).length > 200) desc += "…";
         tr.innerHTML = "<td class=\"mono\">" + escapeHtml(name) + "</td><td>" + escapeHtml(desc) + "</td>";
         toolRows.appendChild(tr);
       });
@@ -283,12 +283,12 @@
     var body = {};
     var tn = document.getElementById("ctToolName").value.trim();
     var fn = document.getElementById("ctFilename").value.trim();
-    var desc = document.getElementById("ctDescription").value.trim();
+    var desc = document.getElementById("ctTOOL_DESCRIPTION").value.trim();
     var src = document.getElementById("ctSource").value.trim();
     var ta = document.getElementById("ctTestArgs").value.trim();
     if (tn) body.tool_name = tn;
     if (fn) body.filename = fn;
-    if (desc) body.description = desc;
+    if (desc) body.TOOL_DESCRIPTION = desc;
     if (src) body.source = src;
     if (document.getElementById("ctOverwrite").checked) body.overwrite = true;
     if (ta) {

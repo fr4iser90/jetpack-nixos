@@ -14,8 +14,10 @@ import httpx
 from . import config
 from .registry import get_registry
 from .tool_routing import (
+    TOOL_INTROSPECTION,
     classify_user_tool_categories,
     filter_merged_tools_by_categories,
+    filter_merged_tools_by_domain,
     last_user_text,
 )
 from .tools import run_tool
@@ -67,7 +69,9 @@ def _http_error_recovery_hint(tool_name: str, result: str) -> str | None:
 
 
 # Client-only keys: never forward to Ollama (not in upstream Chat Completions request schema).
-_BODY_KEYS_STRIP_FROM_OLLAMA = frozenset({"tool_prefetch", "agent_router_categories"})
+_BODY_KEYS_STRIP_FROM_OLLAMA = frozenset(
+    {"tool_prefetch", "agent_router_categories", "TOOL_DOMAIN"}
+)
 
 
 def _parse_router_category_tokens(raw: str | None) -> frozenset[str]:
@@ -152,8 +156,8 @@ _CATALOG_PARAM_HINT = (
 
 
 def _catalog_tool_function(name: str, fn: dict[str, Any]) -> dict[str, Any]:
-    """Small tools[] entry: label + description hint; minimal parameters (never full domain schemas)."""
-    desc = (fn.get("description") or "").strip()
+    """Small tools[] entry: TOOL_LABEL + TOOL_DESCRIPTION hint; minimal parameters (never full domain schemas)."""
+    desc = (fn.get("TOOL_DESCRIPTION") or "").strip()
     if _CATALOG_PARAM_HINT not in desc:
         desc = f"{desc}\n\n{_CATALOG_PARAM_HINT}".strip() if desc else _CATALOG_PARAM_HINT
     if name == "get_tool_help":
@@ -162,7 +166,7 @@ def _catalog_tool_function(name: str, fn: dict[str, Any]) -> dict[str, Any]:
             "properties": {
                 "tool_name": {
                     "type": "string",
-                    "description": "Exact tool name from list_tools_in_category or list_available_tools",
+                    "TOOL_DESCRIPTION": "Exact tool name from list_tools_in_category or list_available_tools",
                 },
             },
             "required": ["tool_name"],
@@ -173,7 +177,7 @@ def _catalog_tool_function(name: str, fn: dict[str, Any]) -> dict[str, Any]:
             "properties": {
                 "category": {
                     "type": "string",
-                    "description": "Category id from list_tool_categories",
+                    "TOOL_DESCRIPTION": "Category id from list_tool_categories",
                 },
             },
             "required": ["category"],
@@ -188,7 +192,7 @@ def _catalog_tool_function(name: str, fn: dict[str, Any]) -> dict[str, Any]:
         "type": "function",
         "function": {
             "name": name,
-            "description": desc,
+            "TOOL_DESCRIPTION": desc,
             "parameters": params,
         },
     }
@@ -230,14 +234,14 @@ def _tools_payload_size_estimate(tools: list[Any]) -> tuple[int, int, int]:
     return c, lo, hi
 
 
-def _log_tools_request_estimate(label: str, tools: list[Any]) -> None:
+def _log_tools_request_estimate(TOOL_LABEL: str, tools: list[Any]) -> None:
     if not config.AGENT_LOG_TOOLS_REQUEST_ESTIMATE:
         return
     n = len(tools)
     jc, lo, hi = _tools_payload_size_estimate(tools)
     logger.info(
         "tools request %s: tool_defs=%d json_chars=%d est_tokens~%d-%d (heuristic, not tokenizer)",
-        label,
+        TOOL_LABEL,
         n,
         jc,
         lo,
@@ -279,6 +283,64 @@ def _extract_first_json_object(text: str) -> dict[str, Any] | None:
     return obj if isinstance(obj, dict) else None
 
 
+def _strip_model_output_markers(text: str) -> str:
+    """
+    Remove whole-line angle-bracket sentinels some models emit (e.g. Nemotron
+    ``<｜begin▁of▁string>`` / ``<｜end▁of▁string>``) so ``replace_tool({...})`` prose can be parsed.
+    """
+    lines_out: list[str] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if len(s) >= 3 and s[0] == "<" and s[-1] == ">" and "\n" not in s:
+            inner = s[1:-1].lower()
+            if any(
+                needle in inner
+                for needle in (
+                    "begin",
+                    "end",
+                    "start",
+                    "eof",
+                    "eot",
+                    "string",
+                    "think",
+                    "reasoning",
+                )
+            ):
+                continue
+        lines_out.append(line)
+    return "\n".join(lines_out).strip()
+
+
+def _parse_parenthesized_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
+    """
+    Parse ``read_tool({...})`` / ``replace_tool({...})`` style text when the model
+    does not emit native ``tool_calls`` (common with small Nemotron builds).
+    """
+    names = sorted(_CONTENT_META_TOOL_NAMES, key=len, reverse=True)
+    for name in names:
+        key = name + "("
+        pos = 0
+        while True:
+            idx = text.find(key, pos)
+            if idx < 0:
+                break
+            j = idx + len(key)
+            while j < len(text) and text[j] in " \t\r\n":
+                j += 1
+            if j >= len(text) or text[j] != "{":
+                pos = idx + 1
+                continue
+            try:
+                obj, _end = JSONDecoder().raw_decode(text[j:])
+            except json.JSONDecodeError:
+                pos = idx + 1
+                continue
+            if isinstance(obj, dict):
+                return name, obj
+            pos = idx + 1
+    return None
+
+
 def _known_tool_names() -> set[str]:
     return {n for t in get_registry().chat_tool_specs if (n := _tool_spec_name(t))}
 
@@ -314,13 +376,47 @@ _CONTENT_META_TOOL_NAMES = frozenset(
     }
 )
 
+# Models often put filename/source at the JSON root while using "tool"/"name" instead of nested parameters.
+_CONTENT_META_TOP_LEVEL_ARG_KEYS = (
+    "filename",
+    "registered_tool_name",
+    "tool_name",
+    "name",
+    "source",
+    "old_string",
+    "new_string",
+    "replace_all",
+    "old_filename",
+    "new_filename",
+    "overwrite",
+    "TOOL_DESCRIPTION",
+)
+
+
+def _merge_meta_tool_obj_args(name: str, obj: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+    if name not in _CONTENT_META_TOOL_NAMES:
+        return base
+    out = dict(base)
+    if isinstance(obj.get("parameters"), dict):
+        out.update(obj["parameters"])
+    if isinstance(obj.get("arguments"), dict):
+        out.update(obj["arguments"])
+    for k in _CONTENT_META_TOP_LEVEL_ARG_KEYS:
+        if k in obj:
+            out[k] = obj[k]
+    return out
+
 
 def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] | None:
     """
     Some models emit JSON like {\"tool\": \"<name>\", \"parameters\": {...}} in message content
     instead of wire-format ``tool_calls``.
     """
-    obj = _extract_first_json_object(_unwrap_fenced_json(content))
+    t = _strip_model_output_markers(_unwrap_fenced_json(content))
+    pc = _parse_parenthesized_tool_call(t)
+    if pc:
+        return pc
+    obj = _extract_first_json_object(t)
     if not obj:
         return None
     name: str | None = None
@@ -329,27 +425,36 @@ def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] 
     if isinstance(tnk, str) and tnk.strip() in _CONTENT_META_TOOL_NAMES:
         name = tnk.strip()
         params = {k: v for k, v in obj.items() if k != "tool_name"}
+        params = _merge_meta_tool_obj_args(name, obj, params)
         return name, params
     if isinstance(obj.get("tool"), str):
-        name = obj["tool"]
+        name = str(obj["tool"]).strip()
         p = obj.get("parameters")
         if not isinstance(p, dict):
             p = obj.get("arguments")
+        if not isinstance(p, dict):
+            p = obj.get("params")
         params = _coerce_params_dict(p)
     elif isinstance(obj.get("name"), str):
-        name = obj["name"]
+        name = str(obj["name"]).strip()
         p = obj.get("parameters")
         if not isinstance(p, dict):
             p = obj.get("arguments")
+        if not isinstance(p, dict):
+            p = obj.get("params")
         params = _coerce_params_dict(p)
     elif isinstance(obj.get("function"), str):
-        name = obj["function"]
+        name = str(obj["function"]).strip()
         p = obj.get("parameters")
         if not isinstance(p, dict):
             p = obj.get("arguments")
+        if not isinstance(p, dict):
+            p = obj.get("params")
         params = _coerce_params_dict(p)
     if not name or params is None:
         return None
+    if isinstance(params, dict):
+        params = _merge_meta_tool_obj_args(name, obj, params)
     return name, params
 
 
@@ -456,7 +561,7 @@ def _synthetic_tool_calls_from_message(
             "function": {"name": name, "arguments": json.dumps(params)},
         }
         logger.info(
-            "content tool fallback: treating assistant JSON as tool_calls for %s(%s)",
+            "content tool fallback: synthetic tool_calls for %s(%s) (JSON or parenthesized prose)",
             name,
             params,
         )
@@ -604,12 +709,21 @@ async def chat_completion(
     body: dict[str, Any],
     *,
     router_categories_header: str | None = None,
+    tool_domain_header: str | None = None,
 ) -> dict[str, Any]:
     # stream flag is ignored here; Ollama always gets stream=false. Caller may wrap JSON as SSE.
     body.pop("agent_tool_mode", None)
     body.pop("agent_mode", None)
     extra_cats_body = _parse_router_categories_value(body.pop("agent_router_categories", None))
     extra_cats_hdr = _parse_router_category_tokens(router_categories_header)
+    raw_tool_dom = body.pop("TOOL_DOMAIN", None)
+    body_tool_dom = (
+        str(raw_tool_dom).strip().lower()
+        if isinstance(raw_tool_dom, str) and raw_tool_dom.strip()
+        else ""
+    )
+    hdr_tool_dom = (tool_domain_header or "").strip().lower()
+    tool_domain = hdr_tool_dom or body_tool_dom or None
 
     model = body.get("model")
     if not model:
@@ -624,11 +738,35 @@ async def chat_completion(
     routed_category: str | None = None
     cats = classify_user_tool_categories(last_user_text(messages))
     cats = cats | extra_cats_body | extra_cats_hdr
+    merged_tools = filter_merged_tools_by_categories(merged_tools, cats)
+    if tool_domain and not (config.AGENT_ROUTER_STRICT_DEFAULT and not cats):
+        merged_tools = filter_merged_tools_by_domain(merged_tools, tool_domain)
+        non_intro = sum(
+            1
+            for t in merged_tools
+            if (n := _tool_spec_name(t)) is not None and n not in TOOL_INTROSPECTION
+        )
+        if non_intro == 0:
+            logger.warning(
+                "tool domain filter %r removed all non-introspection tools; ignoring domain filter",
+                tool_domain,
+            )
+            merged_tools = filter_merged_tools_by_categories(
+                _merge_tools(body.get("tools")), cats
+            )
+    elif tool_domain and config.AGENT_ROUTER_STRICT_DEFAULT and not cats:
+        logger.info(
+            "skipping tool domain filter %r (AGENT_ROUTER_STRICT_DEFAULT with no categories)",
+            tool_domain,
+        )
     if cats:
-        merged_tools = filter_merged_tools_by_categories(merged_tools, cats)
         routed_category = (
             next(iter(cats)) if len(cats) == 1 else "+".join(sorted(cats))
         )
+    elif config.AGENT_ROUTER_STRICT_DEFAULT:
+        routed_category = "minimal"
+    else:
+        routed_category = "full"
 
     # Stufenweise Erkundung: tools[] immer nur Katalog — volles Schema nur via get_tool_help-Antwort.
     tools_for_request = _tools_for_chat_request(merged_tools)

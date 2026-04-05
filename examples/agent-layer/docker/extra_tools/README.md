@@ -5,7 +5,7 @@ Python modules with `TOOLS` + `HANDLERS` in this directory (or any mounted extra
 ## Prompt: `create_tool` (German example)
 
 ```text
-Rufe create_tool auf mit tool_name "fishingIndex", overwrite true, und description:
+Rufe create_tool auf mit tool_name "fishingIndex", overwrite true, und TOOL_DESCRIPTION:
 Grober Beißindex 0–10 fürs Angeln. Nutze httpx + OpenWeather /data/2.5/weather mit Query-Parameter **q** (nicht city), https, API-Key nur os.environ["OPENWEATHER_API_KEY"]. Handler nur return json.dumps(...), keine Tupel.
 ```
 

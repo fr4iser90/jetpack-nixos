@@ -203,6 +203,41 @@ MIGRATIONS: list[tuple[int, str]] = [
           ON user_kb_notes USING GIN (search_tsv);
         """,
     ),
+    (
+        6,
+        """
+        CREATE EXTENSION IF NOT EXISTS vector;
+
+        CREATE TABLE IF NOT EXISTS rag_documents (
+          id BIGSERIAL PRIMARY KEY,
+          tenant_id BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          domain TEXT NOT NULL DEFAULT '',
+          title TEXT NOT NULL DEFAULT '',
+          source_uri TEXT,
+          content_sha256 TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rag_documents_scope
+          ON rag_documents (tenant_id, user_id, domain);
+
+        CREATE TABLE IF NOT EXISTS rag_chunks (
+          id BIGSERIAL PRIMARY KEY,
+          document_id BIGINT NOT NULL REFERENCES rag_documents(id) ON DELETE CASCADE,
+          chunk_index INT NOT NULL,
+          content TEXT NOT NULL,
+          embedding vector(768) NOT NULL,
+          UNIQUE (document_id, chunk_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_rag_chunks_document
+          ON rag_chunks (document_id);
+
+        CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding
+          ON rag_chunks USING hnsw (embedding vector_cosine_ops);
+        """,
+    ),
 ]
 
 
@@ -696,3 +731,102 @@ def kb_note_get(note_id: int, max_body_chars: int = 12000) -> dict[str, Any] | N
         "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
     }
+
+
+def _vector_literal(vec: list[float]) -> str:
+    return "[" + ",".join(str(float(x)) for x in vec) + "]"
+
+
+def rag_document_and_chunks_insert(
+    tenant_id: int,
+    user_id: int,
+    domain: str,
+    title: str,
+    source_uri: str | None,
+    content_sha256: str,
+    chunks: list[tuple[int, str, list[float]]],
+) -> tuple[int, int]:
+    """
+    Insert one ``rag_documents`` row and its chunks (each with embedding).
+    Returns ``(document_id, chunk_count)``. Caller must validate embedding dims.
+    """
+    if not chunks:
+        raise ValueError("chunks must be non-empty")
+    domain = (domain or "").strip()
+    title = (title or "").strip()
+    uri = (source_uri or "").strip() or None
+    sha = (content_sha256 or "").strip() or None
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO rag_documents
+                  (tenant_id, user_id, domain, title, source_uri, content_sha256)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (tenant_id, user_id, domain, title, uri, sha),
+            )
+            doc_id = int(cur.fetchone()[0])
+            for idx, content, emb in chunks:
+                cur.execute(
+                    """
+                    INSERT INTO rag_chunks (document_id, chunk_index, content, embedding)
+                    VALUES (%s, %s, %s, %s::vector)
+                    """,
+                    (doc_id, int(idx), content, _vector_literal(emb)),
+                )
+        conn.commit()
+    return doc_id, len(chunks)
+
+
+def rag_vector_search(
+    tenant_id: int,
+    user_id: int,
+    query_embedding: list[float],
+    domain: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Cosine distance (pgvector ``<=>``); lower is more similar."""
+    limit = max(1, min(int(limit), 50))
+    dom = (domain or "").strip()
+    qv = _vector_literal(query_embedding)
+    with pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT
+                  c.id AS chunk_id,
+                  c.chunk_index,
+                  left(c.content, 8000) AS content,
+                  d.id AS document_id,
+                  d.title,
+                  d.domain,
+                  (c.embedding <=> %s::vector) AS distance
+                FROM rag_chunks c
+                JOIN rag_documents d ON d.id = c.document_id
+                WHERE d.tenant_id = %s
+                  AND d.user_id = %s
+                  AND (%s = '' OR d.domain = %s)
+                ORDER BY c.embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (qv, tenant_id, user_id, dom, dom, qv, limit),
+            )
+            rows = cur.fetchall()
+        conn.commit()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        dist = r.get("distance")
+        out.append(
+            {
+                "chunk_id": r["chunk_id"],
+                "chunk_index": r["chunk_index"],
+                "content": r["content"],
+                "document_id": r["document_id"],
+                "title": r["title"],
+                "domain": r["domain"],
+                "distance": float(dist) if dist is not None else None,
+            }
+        )
+    return out

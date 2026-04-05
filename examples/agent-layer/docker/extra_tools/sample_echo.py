@@ -24,11 +24,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "echo_text",
-            "description": "Returns the given text unchanged (demo extra tool).",
+            "TOOL_DESCRIPTION": "Returns the given text unchanged (demo extra tool).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "text": {"type": "string", "description": "Text to echo"},
+                    "text": {"type": "string", "TOOL_DESCRIPTION": "Text to echo"},
                 },
                 "required": ["text"],
             },

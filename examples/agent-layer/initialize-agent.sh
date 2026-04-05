@@ -158,7 +158,7 @@ PY
         echo "    models[] = zusätzliche Pulls (ohne agent erneut einzutragen)"
         echo "    optional.* = nur Referenz — zum Ziehen Einträge nach models[] verschieben"
       else
-        echo "    (.txt: kein agent_layer_model — für Labels ollama-models.json nutzen)"
+        echo "    (.txt: kein agent_layer_model — für TOOL_LABELs ollama-models.json nutzen)"
       fi
       for m in "${pulls[@]}"; do
         if [[ -n "$AGENT_LAYER_MODEL" && "$m" == "$AGENT_LAYER_MODEL" ]]; then
