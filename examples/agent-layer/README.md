@@ -51,13 +51,11 @@ docker compose build && docker compose up -d
 
 - Health: `curl -s http://127.0.0.1:8088/health`
 - Tools: `curl -s http://127.0.0.1:8088/v1/tools | jq .tools` (Chat-`tools[]`-Form wie am HTTP-Endpunkt) und `jq .tools_meta` (Registry-Meta pro Modul)
-- **Tool-Control (Browser):** `http://127.0.0.1:8088/control/` — oder nur **`http://127.0.0.1:8088/`** (Redirect nach `/control/`). Liste, Registry-Reload, Formular für `create_tool` per **`POST /v1/admin/create-tool`**. Die Seite selbst braucht keinen Bearer; **`/v1/*`** weiterhin mit `AGENT_API_KEY`, falls gesetzt (Key im UI eintragen oder nur im LAN nutzen).
 
 ## Open WebUI
 
 1. **Connections → OpenAI API**: Base URL `http://agent-layer:8080/v1` (Container im Netz `ai-net`) bzw. vom Host `http://<host>:8088/v1`.
 2. **Ollama-URL** in der UI ist optional, wenn alle Modelllisten über den Agent laufen (`GET /v1/models` proxy zu Ollama).
-3. API-Key nur setzen, wenn du `AGENT_API_KEY` im Agent gesetzt hast — dann gleicher Wert als Bearer-Token.
 4. **Getrennte Todos pro WebUI-Login:** Open-WebUI-Stack mit **`ENABLE_FORWARD_USER_INFO_HEADERS=true`** starten (`examples/open-webui/docker/compose.yaml` ist so gesetzt). Der Agent liest standardmäßig **`X-OpenWebUI-User-Id`** (siehe [TOOLS.md](./TOOLS.md#multi-user-postgres)).
 
 ## Konfiguration (.env)
@@ -78,7 +76,6 @@ Weitere Variablen: siehe `docker/.env.example` (`OLLAMA_BASE_URL`, `AGENT_HTTP_P
 
 - **Laden:** Die Registry scannt Tool-Wurzeln **rekursiv** nach `*.py`. Im Image sind Module unter **`tools/`** nach Layer gruppiert (`core/`, `knowledge/`, `external/`, `productivity/`, `domains/`). Standard-Wurzel: `tools` im Image, optional `AGENT_TOOLS_EXTRA_DIR`. Mit **`AGENT_TOOL_DIRS`** (Komma-Liste) steuerst du die Wurzeln selbst. `tools_meta` kann pro Modul **`layer`** (aus dem ersten Pfadsegment) und optional **`tags`** (`TOOL_TAGS` im Modul) enthalten — Basis für späteres Filtern bei sehr vielen Tools.
 - **Pro Datei:** `TOOLS` + `HANDLERS`, optional `TOOL_ID`, `__version__` — siehe [TOOLS.md](./TOOLS.md).
-- **Reload:** `POST /v1/admin/reload-tools` (mit `AGENT_API_KEY`, falls gesetzt) — voller Rescan aller konfigurierten Verzeichnisse.
 
 Details und **Checkliste** der Tools: [TOOLS.md](./TOOLS.md).
 

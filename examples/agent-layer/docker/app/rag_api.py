@@ -21,7 +21,6 @@ async def admin_rag_ingest(request: Request):
     """
     Ingest plain text into pgvector-backed RAG for the resolved user/tenant
     (``AGENT_USER_SUB_HEADER`` / ``AGENT_TENANT_ID_HEADER``, same as chat).
-    Requires ``AGENT_API_KEY`` when set (global optional Bearer middleware).
     """
     if not config.AGENT_RAG_ENABLED:
         raise HTTPException(status_code=503, detail="RAG disabled (AGENT_RAG_ENABLED=false)")

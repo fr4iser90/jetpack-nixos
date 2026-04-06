@@ -35,7 +35,6 @@ def secrets_help(arguments: dict[str, Any]) -> str:
     hints: list[str] = [
         "Neues Secret speichern: **nur** Tool `register_secrets` — in der Antwort stehen `curl_bash` und ggf. `jq_register_example_de` (OTP ist schon eingebaut).",
         "Dieses Tool (`secrets_help`) erzeugt **kein** OTP und keinen curl — nur Erklärung.",
-        "Gespeicherte `service_key`-Namen auflisten oder einen Key löschen: HTTP `GET`/`DELETE` `/v1/user/secrets` mit denselben User-Headern wie der Chat (optional Bearer `AGENT_API_KEY`) — siehe TOOLS.md.",
     ]
     if topic in ("email", "imap", "mail", "gmail"):
         hints.append(
@@ -98,8 +97,6 @@ def secrets_help(arguments: dict[str, Any]) -> str:
             ],
             "list_delete_note_de": (
                 "Gespeicherte Keys auflisten oder löschen: REST `GET` bzw. `DELETE /v1/user/secrets` "
-                "mit User-Header wie beim Chat; bei gesetztem `AGENT_API_KEY` Header "
-                "`Authorization: Bearer <AGENT_API_KEY>`. Details: TOOLS.md."
             ),
             "hints": hints,
         },

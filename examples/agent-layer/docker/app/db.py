@@ -254,6 +254,144 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_rss_articles_fetched ON rss_articles (fetched_at DESC);
         """,
     ),
+    (
+        9,
+        """
+        -- Convert users.id from BIGINT to UUID
+        -- Safe migration, no data loss
+
+        -- 1. Remove foreign keys
+        ALTER TABLE refresh_tokens DROP CONSTRAINT IF EXISTS refresh_tokens_user_id_fkey;
+        ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_user_id_fkey;
+        ALTER TABLE workflows DROP CONSTRAINT IF EXISTS workflows_owner_user_id_fkey;
+        ALTER TABLE workflow_permissions DROP CONSTRAINT IF EXISTS workflow_permissions_user_id_fkey;
+        ALTER TABLE todos DROP CONSTRAINT IF EXISTS todos_user_id_fkey;
+        ALTER TABLE tool_invocations DROP CONSTRAINT IF EXISTS tool_invocations_user_id_fkey;
+        ALTER TABLE user_secrets DROP CONSTRAINT IF EXISTS user_secrets_user_id_fkey;
+        ALTER TABLE secret_upload_otps DROP CONSTRAINT IF EXISTS secret_upload_otps_user_id_fkey;
+        ALTER TABLE user_kb_notes DROP CONSTRAINT IF EXISTS user_kb_notes_user_id_fkey;
+        ALTER TABLE rag_documents DROP CONSTRAINT IF EXISTS rag_documents_user_id_fkey;
+
+        -- 2. Prepare users table
+        ALTER TABLE users ALTER COLUMN id DROP DEFAULT;
+        DROP SEQUENCE IF EXISTS users_id_seq CASCADE;
+
+        -- 3. Add temporary uuid column
+        ALTER TABLE users ADD COLUMN uuid UUID UNIQUE DEFAULT gen_random_uuid();
+        UPDATE users SET uuid = ('00000000-0000-4000-8000-' || lpad(to_hex(id), 12, '0'))::uuid WHERE id < 1000000;
+
+        -- 4. FIRST convert foreign key columns to TEXT
+        ALTER TABLE refresh_tokens ALTER COLUMN user_id TYPE TEXT;
+        ALTER TABLE api_keys ALTER COLUMN user_id TYPE TEXT;
+        ALTER TABLE workflows ALTER COLUMN owner_user_id TYPE TEXT;
+        ALTER TABLE workflow_permissions ALTER COLUMN user_id TYPE TEXT;
+        ALTER TABLE todos ALTER COLUMN user_id TYPE TEXT;
+        ALTER TABLE tool_invocations ALTER COLUMN user_id TYPE TEXT;
+        ALTER TABLE user_secrets ALTER COLUMN user_id TYPE TEXT;
+        ALTER TABLE secret_upload_otps ALTER COLUMN user_id TYPE TEXT;
+        ALTER TABLE user_kb_notes ALTER COLUMN user_id TYPE TEXT;
+        ALTER TABLE rag_documents ALTER COLUMN user_id TYPE TEXT;
+
+        -- 5. Update ALL foreign keys NOW
+        UPDATE refresh_tokens SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+        UPDATE api_keys SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+        UPDATE workflows SET owner_user_id = (SELECT uuid::text FROM users WHERE id = owner_user_id::bigint);
+        UPDATE workflow_permissions SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+        UPDATE todos SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+        UPDATE tool_invocations SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+        UPDATE user_secrets SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+        UPDATE secret_upload_otps SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+        UPDATE user_kb_notes SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+        UPDATE rag_documents SET user_id = (SELECT uuid::text FROM users WHERE id = user_id::bigint);
+
+        -- 6. Switch primary key
+        ALTER TABLE users DROP CONSTRAINT users_pkey CASCADE;
+        ALTER TABLE users DROP COLUMN id;
+        ALTER TABLE users RENAME COLUMN uuid TO id;
+        ALTER TABLE users ADD PRIMARY KEY (id);
+
+        -- 7. Convert all foreign key columns to UUID
+        ALTER TABLE refresh_tokens ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+        ALTER TABLE api_keys ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+        ALTER TABLE workflows ALTER COLUMN owner_user_id TYPE UUID USING owner_user_id::uuid;
+        ALTER TABLE workflow_permissions ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+        ALTER TABLE todos ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+        ALTER TABLE tool_invocations ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+        ALTER TABLE user_secrets ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+        ALTER TABLE secret_upload_otps ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+        ALTER TABLE user_kb_notes ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+        ALTER TABLE rag_documents ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+
+        -- 7. Restore foreign keys
+        ALTER TABLE refresh_tokens ADD CONSTRAINT refresh_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE api_keys ADD CONSTRAINT api_keys_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE workflows ADD CONSTRAINT workflows_owner_user_id_fkey FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE workflow_permissions ADD CONSTRAINT workflow_permissions_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE todos ADD CONSTRAINT todos_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE tool_invocations ADD CONSTRAINT tool_invocations_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE user_secrets ADD CONSTRAINT user_secrets_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE secret_upload_otps ADD CONSTRAINT secret_upload_otps_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE user_kb_notes ADD CONSTRAINT user_kb_notes_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        ALTER TABLE rag_documents ADD CONSTRAINT rag_documents_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+        """,
+    ),
+    (
+        10,
+        """
+        -- Auth System Tables
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          expires_at TIMESTAMPTZ NOT NULL,
+          last_used_at TIMESTAMPTZ
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
+
+        CREATE TABLE IF NOT EXISTS api_keys (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          key_hash TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          last_used_at TIMESTAMPTZ,
+          expires_at TIMESTAMPTZ
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
+        CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
+
+        -- Workflow System
+        CREATE TABLE IF NOT EXISTS workflows (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          description TEXT,
+          definition JSONB NOT NULL DEFAULT '{}'::jsonb,
+          visibility TEXT NOT NULL DEFAULT 'private',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_workflows_owner ON workflows(owner_user_id);
+
+        CREATE TABLE IF NOT EXISTS workflow_permissions (
+          workflow_id UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          can_execute BOOLEAN NOT NULL DEFAULT false,
+          can_edit BOOLEAN NOT NULL DEFAULT false,
+          granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (workflow_id, user_id)
+        );
+        """,
+    ),
 ]
 
 

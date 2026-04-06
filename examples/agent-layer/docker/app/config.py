@@ -34,7 +34,6 @@ MAX_TOOL_ROUNDS = _env_int("AGENT_MAX_TOOL_ROUNDS", 8)
 DATA_DIR = os.environ.get("AGENT_DATA_DIR", "/data")
 # Before replace_tool / update_tool / create_tool overwrite, copy prior .py here (UTC timestamp prefix).
 TOOLS_BACKUP_ENABLED = _env_bool("AGENT_TOOLS_BACKUP_ENABLED", True)
-OPTIONAL_API_KEY = os.environ.get("AGENT_API_KEY", "").strip()
 SYSTEM_PROMPT_EXTRA = os.environ.get("AGENT_SYSTEM_PROMPT", "").strip()
 
 # If Ollama returns no tool_calls but JSON tool intent in message content (e.g. Nemotron), parse and run.
@@ -149,7 +148,6 @@ def tool_scan_directories() -> list[Path]:
 # Read on each extra-tool scan (reload) so container env updates take effect without code change.
 # Multi-tenant HTTP: stable user id per request (comma-separated header names; first non-empty wins).
 # Default fits Open WebUI with ENABLE_FORWARD_USER_INFO_HEADERS=true (X-OpenWebUI-User-Id).
-# Without AGENT_API_KEY, clients can spoof headers.
 def _user_sub_headers() -> list[str]:
     raw = (os.environ.get("AGENT_USER_SUB_HEADER") or "").strip()
     if raw:

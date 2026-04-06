@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 __version__ = "1.0.0"
 
-RUN_ON_STARTUP = True
+RUN_ON_STARTUP = False
 RUN_EVERY_MINUTES = 360 # every 6 hours
 
 # Add your RSS feeds here

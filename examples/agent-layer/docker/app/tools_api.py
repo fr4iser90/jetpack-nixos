@@ -9,6 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 
 from . import config
+from .auth import require_permission
 from .registry import get_registry, reload_registry
 
 logger = logging.getLogger(__name__)
@@ -46,16 +47,13 @@ async def admin_list_tools():
 
 
 @router.post("/v1/admin/reload-tools")
-async def admin_reload_tools(scope: Literal["all", "extra"] = "all"):
+@require_permission("write", "tool")
+async def admin_reload_tools(request: Request, user, scope: Literal["all", "extra"] = "all"):
     """
     Rescan all configured tool directories (``AGENT_TOOL_DIRS`` or defaults).
     Broken or conflicting tools are skipped with logs. ``scope`` is accepted for API
     compatibility; both values perform the same full rescan.
     """
-    if not config.OPTIONAL_API_KEY:
-        logger.warning(
-            "reload-tools called with AGENT_API_KEY unset — consider setting it if exposed"
-        )
     try:
         reg = reload_registry(scope=scope)
     except ValueError as e:
@@ -74,10 +72,10 @@ async def admin_reload_tools(scope: Literal["all", "extra"] = "all"):
 
 
 @router.post("/v1/admin/create-tool")
-async def admin_create_tool(request: Request):
+@require_permission("write", "tool")
+async def admin_create_tool(request: Request, user):
     """
     Same JSON body as the chat tool ``create_tool`` (codegen without ``source``, or full module in ``source``).
-    Requires ``AGENT_API_KEY`` when that env var is set (same as other admin routes).
     """
     try:
         body = await request.json()

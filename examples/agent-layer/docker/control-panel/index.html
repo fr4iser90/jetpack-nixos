@@ -82,7 +82,7 @@
 <body>
   <h1>Agent layer — Tool-Control</h1>
   <p class="hint">
-    Diese Seite lädt ohne API-Key. Alle Aufrufe unter <span class="mono">/v1/</span> benötigen denselben Bearer wie Open WebUI, wenn <span class="mono">AGENT_API_KEY</span> gesetzt ist.
+    Diese Seite lädt ohne API-Key. Alle Aufrufe unter <span class="mono">/v1/</span> erfordern gültige Authentifizierung.
     Nur im vertrauenswürdigen Netz bereitstellen.
   </p>
 
@@ -94,7 +94,7 @@
         <input type="text" id="baseUrl" placeholder="http://127.0.0.1:8088" autocomplete="off" />
       </div>
       <div>
-        <TOOL_LABEL for="apiKey">AGENT_API_KEY (optional)</TOOL_LABEL>
+        <TOOL_LABEL for="apiKey">API Key</TOOL_LABEL>
         <input type="password" id="apiKey" placeholder="Bearer-Token" autocomplete="off" />
       </div>
     </div>

@@ -1,5 +1,4 @@
 # Copy into AGENT_TOOLS_EXTRA_DIR (flat or nested subfolders; registry scans recursively).
-# After adding or editing: POST /v1/admin/reload-tools (with AGENT_API_KEY if set).
 
 from __future__ import annotations
 

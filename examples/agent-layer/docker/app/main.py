@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from . import db
 from . import identity
+from .auth import get_current_user, require_permission, LoginRequest, create_access_token, create_refresh_token, verify_password, get_user_by_email, validate_refresh_token
 from .agent import chat_completion
 from .http_identity import resolve_user_tenant
 from .tools_api import router as tools_router
@@ -48,6 +49,72 @@ app.include_router(user_secrets_router)
 app.include_router(tools_router)
 app.include_router(rag_router)
 
+
+# Auth Endpoints
+@app.post("/auth/login")
+async def login(request: Request, login_data: LoginRequest):
+    user = get_user_by_email(login_data.email)
+    if not user or not user.password_hash or not verify_password(login_data.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    access_token = create_access_token(user.id, user.role)
+    refresh_token, refresh_token_hash = create_refresh_token(user.id)
+    
+    # Store refresh token
+    with db.pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+                VALUES (%s, %s, NOW() + INTERVAL '7 days')
+            """, (user.id, refresh_token_hash))
+            conn.commit()
+    
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": 900,
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "role": user.role
+        }
+    }
+
+
+@app.post("/auth/refresh")
+async def refresh_token(request: Request):
+    try:
+        body = await request.json()
+        refresh_token = body.get("refresh_token")
+        if not refresh_token:
+            raise HTTPException(status_code=400, detail="refresh_token required")
+        
+        user = validate_refresh_token(refresh_token)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+        
+        access_token = create_access_token(user.id, user.role)
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "expires_in": 900
+        }
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+
+@app.get("/auth/me")
+@require_permission("read", "user")
+async def get_current_user_info(request: Request, user):
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "role": user.role,
+        "created_at": user.created_at.isoformat()
+    }
+
 _control_dir = Path(__file__).resolve().parent.parent / "control-panel"
 if _control_dir.is_dir():
     app.mount(
@@ -71,25 +138,31 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def optional_api_key(request: Request, call_next):
-    if not config.OPTIONAL_API_KEY:
-        return await call_next(request)
+async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path in ("/health", "/v1/models"):
+
+    # Public endpoints no auth required
+    public_paths = [
+        "/health",
+        "/v1/models",
+        "/auth/login",
+        "/auth/claim",
+        "/"
+    ]
+
+    if any(path == p or path.startswith("/control/") for p in public_paths):
         return await call_next(request)
-    # Root redirect + static UI: no Bearer required; /v1/* still requires AGENT_API_KEY when set.
-    if path == "/" or path == "/control" or path.startswith("/control/"):
+
+    # Allow OTP register endpoint
+    if request.method == "POST" and path == "/v1/user/secrets/register-with-otp":
         return await call_next(request)
-    # OTP minted in chat binds to user_id; no shared Bearer for end users (see register_secrets tool).
-    if (
-        request.method == "POST"
-        and request.url.path == "/v1/user/secrets/register-with-otp"
-    ):
-        return await call_next(request)
-    auth = request.headers.get("authorization") or ""
-    token = auth.removeprefix("Bearer ").strip()
-    if token != config.OPTIONAL_API_KEY:
+
+    # All other endpoints require valid auth
+    try:
+        await get_current_user(request)
+    except HTTPException:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
     return await call_next(request)
 
 
