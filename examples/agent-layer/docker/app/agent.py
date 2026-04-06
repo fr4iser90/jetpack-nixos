@@ -725,9 +725,8 @@ async def chat_completion(
     hdr_tool_dom = (tool_domain_header or "").strip().lower()
     tool_domain = hdr_tool_dom or body_tool_dom or None
 
-    model = body.get("model")
-    if not model:
-        raise ValueError("missing model")
+    from .config import OLLAMA_DEFAULT_MODEL
+    model = body.get("model", OLLAMA_DEFAULT_MODEL)
 
     messages = _inject_system_prompt(list(body.get("messages") or []))
     pf = body.get("tool_prefetch")

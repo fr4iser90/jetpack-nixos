@@ -29,6 +29,7 @@ def _env_int(key: str, default: int) -> int:
 
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
+OLLAMA_DEFAULT_MODEL = (os.environ.get("OLLAMA_DEFAULT_MODEL") or "nemotron-3-nano:4b").strip()
 MAX_TOOL_ROUNDS = _env_int("AGENT_MAX_TOOL_ROUNDS", 8)
 DATA_DIR = os.environ.get("AGENT_DATA_DIR", "/data")
 # Before replace_tool / update_tool / create_tool overwrite, copy prior .py here (UTC timestamp prefix).
@@ -138,6 +139,7 @@ def tool_scan_directories() -> list[Path]:
 
     # Repo layout: examples/agent-layer/docker/{app,tools}; image WORKDIR /app.
     add(Path(__file__).resolve().parent.parent / "tools")
+    add(Path(__file__).resolve().parent.parent / "workflows")
     if TOOLS_EXTRA_DIR:
         add(Path(TOOLS_EXTRA_DIR).expanduser())
     return out

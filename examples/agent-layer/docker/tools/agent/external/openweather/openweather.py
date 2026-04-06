@@ -17,7 +17,7 @@ import httpx
 
 __version__ = "1.2.0"
 TOOL_ID = "openweather"
-TOOL_DOMAIN = "openweather"
+TOOL_DOMAIN = "weather"
 TOOL_LABEL = "OpenWeather"
 TOOL_DESCRIPTION = (
     "Current weather and 5-day / 3-hour forecast using OpenWeather 2.5 APIs (OPENWEATHER_API_KEY)."
@@ -28,6 +28,7 @@ TOOL_TRIGGERS = (
     "forecast",
     "temperature",
     "openweathermap",
+    "wetter",
 )
 
 _OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/weather"
@@ -248,6 +249,7 @@ TOOLS: list[dict[str, Any]] = [
                 "5-day weather forecast in 3-hour steps (OpenWeather /data/2.5/forecast, metric). "
                 "Use for picking time windows (e.g. tomorrow); there is no official fishing/bite index in the API — "
                 "compute any heuristic from temp, humidity, wind, pop in the returned slots. "
+                "Same key as openweather_current: OPENWEATHER_API_KEY on the server only."
             ),
             "parameters": {
                 "type": "object",

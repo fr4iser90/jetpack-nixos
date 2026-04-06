@@ -206,6 +206,10 @@ class ToolRegistry:
         mod_handlers = getattr(mod, "HANDLERS", None)
         if mod_tools is None and mod_handlers is None:
             return
+        if mod_handlers is None:
+            return
+        if mod_tools is None:
+            mod_tools = []
         if not isinstance(mod_tools, list) or not isinstance(mod_handlers, dict):
             logger.error(
                 "invalid tool exports (need TOOLS list and HANDLERS dict): %s", source
@@ -227,11 +231,6 @@ class ToolRegistry:
                 logger.warning("skip tool without name in %s", source)
                 continue
             if name in handlers or name in pending_handlers:
-                logger.warning(
-                    "skip duplicate tool %r in %s (earlier tool wins)",
-                    name,
-                    source,
-                )
                 continue
             handler = mod_handlers.get(name)
             if not callable(handler):
@@ -249,11 +248,10 @@ class ToolRegistry:
         tools.extend(pending_specs)
 
         if not tool_names:
-            if mod_handlers:
-                logger.warning(
-                    "tool %s exports HANDLERS but no valid TOOLS entries",
-                    source,
-                )
+            # Only cron workflows, no tools → DO NOT ADD TO TOOL REGISTRY
+            logger.info(
+                "skipping workflow %s v%s (%d handlers) - separate workflow registry will load this", pid, ver, len(mod_handlers)
+            )
             return
 
         for declared in mod_handlers:
@@ -269,6 +267,7 @@ class ToolRegistry:
             "version": ver,
             "source": source,
             "tools": tool_names,
+            "module": mod,
         }
         if file_sha256 is not None:
             entry["sha256"] = file_sha256

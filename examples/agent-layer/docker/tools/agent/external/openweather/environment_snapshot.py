@@ -157,7 +157,6 @@ TOOLS: list[dict[str, Any]] = [
             "TOOL_DESCRIPTION": (
                 "Return structured context: current time in an IANA timezone, optional OpenWeather snapshot "
                 "(if location + server OPENWEATHER_API_KEY), coarse daylight flag, tiny exposure hints. "
-                "Use before fishing_bite_index / survival / hunting planning."
             ),
             "parameters": {
                 "type": "object",

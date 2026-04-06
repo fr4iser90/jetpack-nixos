@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY app ./app
 COPY tools ./tools
+COPY interfaces ./interfaces
+COPY workflows ./workflows
+COPY workspace ./workspace
 COPY control-panel ./control-panel
 
 ENV PYTHONUNBUFFERED=1
