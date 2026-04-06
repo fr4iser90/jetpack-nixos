@@ -234,3 +234,17 @@ def create_user(email: str, password: str, role: str = "user") -> User:
         role=role,
         created_at=created_at
     )
+
+
+def update_user_password(user_id: uuid.UUID, password: str) -> None:
+    """Update existing user password"""
+    password_hash = hash_password(password)
+
+    with db.pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE users
+                SET password_hash = %s
+                WHERE id = %s
+            """, (password_hash, user_id))
+            conn.commit()

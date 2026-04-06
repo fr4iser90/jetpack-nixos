@@ -133,8 +133,17 @@ if __name__ == "__main__":
     password = sys.argv[2]
     
     db.init_pool()
+
+    from .auth import get_user_by_email, update_user_password
     
-    user = create_user(email, password, role="admin")
+    existing = get_user_by_email(email)
     
-    print(f"✅ Admin User erfolgreich erstellt/aktualisiert: {email}")
+    if existing:
+        update_user_password(existing.id, password)
+        print(f"ℹ️  Admin User existiert bereits: {email}")
+        print(f"ℹ️  Passwort wurde aktualisiert")
+    else:
+        user = create_user(email, password, role="admin")
+        print(f"✅ Admin User erfolgreich erstellt: {email}")
+
     print(f"✅ Du kannst dich jetzt anmelden unter /control/")
